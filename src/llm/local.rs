@@ -40,6 +40,8 @@ impl LocalEngine {
             temperature: config.llm.temperature,
             top_p: config.llm.top_p,
             max_tokens: config.llm.max_tokens,
+            use_gpu: config.llm.use_gpu,
+            max_context_len: config.llm.max_context_len,
             ..Default::default()
         };
 

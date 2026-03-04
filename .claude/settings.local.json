@@ -30,7 +30,9 @@
       "Bash(cd:*)",
       "Bash(git:*)",
       "Bash(ls:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(gh run:*)",
+      "Bash(gh api:*)"
     ]
   }
 }

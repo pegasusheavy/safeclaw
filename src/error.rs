@@ -29,6 +29,9 @@ pub enum SafeAgentError {
     #[error("approval error: {0}")]
     Approval(String),
 
+    #[error("tool error: {0}")]
+    Tool(String),
+
     #[error("tool not found: {0}")]
     ToolNotFound(String),
 

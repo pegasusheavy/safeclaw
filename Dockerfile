@@ -1,7 +1,9 @@
-# Stage 1: Build the safeclaw binary (musl/static for Alpine)
-FROM rust:1.88-alpine AS builder
+# Stage 1: Build the safeclaw binary (glibc/Debian for CUDA compatibility)
+FROM rust:1.93-bookworm AS builder
 
-RUN apk add --no-cache musl-dev pkgconf perl make openssl-dev openssl-libs-static
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev make perl && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
@@ -11,35 +13,29 @@ COPY config.example.toml ./
 
 # Cache buster — pass --build-arg CACHEBUST=$(date +%s) to force rebuild
 ARG CACHEBUST=1
-RUN cargo build --release
+ARG CARGO_FEATURES="local-cuda"
+RUN cargo build --release --features "${CARGO_FEATURES}"
 
-# Stage 2: Runtime (Alpine)
-FROM alpine:3.21
+# Stage 2: Runtime (Debian slim)
+FROM debian:bookworm-slim
 
-# System packages — Alpine 3.21 ships Node 22.x LTS and Python 3.12
-# coreutils provides chroot for the jail entrypoint
-RUN apk add --no-cache \
-    ca-certificates curl git bash su-exec coreutils \
-    nodejs npm python3 py3-pip
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git bash \
+    nodejs npm python3 python3-pip python3-venv && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code CLI globally
 RUN npm install -g @anthropic-ai/claude-code
 
-# Install ngrok for tunnel support.
-# The equinox.io tgz endpoint is defunct; pull the .deb from the ngrok S3
-# apt repo and extract the static binary (works fine on Alpine/musl).
-RUN apk add --no-cache --virtual .ngrok-deps binutils xz && \
-    ARCH="$(uname -m)" && \
+# Install ngrok
+RUN ARCH="$(uname -m)" && \
     if [ "$ARCH" = "x86_64" ]; then NGROK_ARCH="amd64"; \
     elif [ "$ARCH" = "aarch64" ]; then NGROK_ARCH="arm64"; \
     else NGROK_ARCH="amd64"; fi && \
     curl -fsSL "https://ngrok-agent.s3.amazonaws.com/pool/main/n/ngrok/ngrok_3.36.1-0_${NGROK_ARCH}.deb" \
     -o /tmp/ngrok.deb && \
-    cd /tmp && ar x ngrok.deb && tar -xf data.tar.xz && \
-    mv /tmp/usr/local/bin/ngrok /usr/local/bin/ngrok && \
-    chmod +x /usr/local/bin/ngrok && \
-    rm -rf /tmp/ngrok.deb /tmp/data.tar.xz /tmp/control.tar.* /tmp/debian-binary /tmp/usr && \
-    apk del .ngrok-deps
+    dpkg -i /tmp/ngrok.deb && \
+    rm /tmp/ngrok.deb
 
 # Install common Python packages that skills are likely to need
 RUN pip install --no-cache-dir --break-system-packages \
@@ -61,13 +57,11 @@ COPY --from=builder /build/target/release/safeclaw /usr/local/bin/safeclaw
 COPY scripts/chroot-jail.sh /usr/local/bin/chroot-jail.sh
 RUN chmod +x /usr/local/bin/chroot-jail.sh
 
-# Non-root user for running safeclaw (jail setup still runs as root).
-# UID/GID default to 1000 to match typical host users — override with
-# --build-arg to match your host user's uid/gid for bind-mount perms.
+# Non-root user for running safeclaw
 ARG SAFE_UID=1000
 ARG SAFE_GID=1000
-RUN addgroup -g "${SAFE_GID}" -S safeclaw && \
-    adduser -u "${SAFE_UID}" -G safeclaw -h /home/safeclaw -s /bin/bash -S safeclaw
+RUN groupadd -g "${SAFE_GID}" safeclaw && \
+    useradd -u "${SAFE_UID}" -g safeclaw -m -d /home/safeclaw -s /bin/bash safeclaw
 
 # Pre-create the jail root and volume mount points
 RUN mkdir -p /jail /data/safeclaw/skills /config/safeclaw /home/safeclaw && \
@@ -81,6 +75,4 @@ EXPOSE 3031 443
 
 VOLUME ["/data/safeclaw", "/config/safeclaw"]
 
-# The entrypoint script builds the chroot jail at startup, then
-# chroots into it and exec's safeclaw.  Pass NO_JAIL=1 to bypass.
 ENTRYPOINT ["chroot-jail.sh"]

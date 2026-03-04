@@ -1,6 +1,7 @@
 mod acme;
 mod agent;
 mod approval;
+mod bridge;
 mod config;
 mod crypto;
 mod dashboard;
@@ -155,7 +156,28 @@ async fn main() {
     }
 
     // Build the tool registry
-    let tool_registry = build_tool_registry(&config, &data_dir);
+    #[allow(unused_mut)]
+    let mut tool_registry = build_tool_registry(&config, &data_dir);
+
+    // Connect to MCP servers (daimon bridge)
+    #[cfg(feature = "daimon")]
+    {
+        if !config.mcp.servers.is_empty() {
+            info!(
+                servers = config.mcp.servers.len(),
+                "connecting to MCP servers via daimon bridge"
+            );
+            let mcp_mgr =
+                bridge::McpManager::connect_all(&config.mcp.servers).await;
+            info!(
+                servers = mcp_mgr.server_count(),
+                tools = mcp_mgr.total_tools(),
+                "MCP bridge ready"
+            );
+            mcp_mgr.register_tools(&mut tool_registry);
+        }
+    }
+
     info!(tools = tool_registry.len(), "tool registry initialized");
 
     // Shutdown signal
