@@ -5,6 +5,38 @@ All notable changes to SafeClaw are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-03-04
+
+### Added
+
+- **Daimon framework integration** — optional `daimon` feature flag pulls in the
+  [daimon](https://crates.io/crates/daimon) agentic framework (v0.16) from
+  crates.io with `macros` and `mcp` features. Enables MCP tool server
+  connectivity and bidirectional tool trait bridging.
+- **MCP tool server support** — configure external MCP servers (stdio or HTTP
+  transport) via `[[mcp.servers]]` in `config.toml`. Tools are auto-discovered
+  at startup and registered in SafeClaw's tool registry with `mcp_{server}_{tool}`
+  prefixed names, flowing through the approval queue like built-in tools.
+- **Bridge module (`src/bridge/`)** — bidirectional adapters between SafeClaw and
+  daimon tool traits:
+  - `DaimonToolAdapter`: wraps daimon/MCP tools for SafeClaw's `ToolRegistry`
+  - `SafeClawToolAdapter`: wraps SafeClaw tools for daimon's agent patterns
+- **`McpConfig` / `McpServerEntry`** — new configuration structs for declaring
+  MCP servers with name, transport type, command/args (stdio), or URL (http).
+- **`SafeAgentError::Tool`** — new error variant for tool execution bridge errors.
+
+### Changed
+
+- **Dockerfile switched to Debian** — builder uses `rust:1.93-bookworm` and
+  runtime uses `debian:bookworm-slim` instead of Alpine, for glibc compatibility
+  with NVIDIA CUDA libraries.
+- **llama-gguf dependency updated** — bumped to v0.11.3 with CUDA tensor naming
+  fixes, NVRTC include path auto-detection, and GPU-only inference corrections.
+  Vulkan feature removed from default build (CUDA-only in Docker).
+- **Local LLM config** — `LlmConfig` now supports `use_gpu` and
+  `max_context_len` fields, passed through to llama-gguf's `EngineConfig` for
+  GPU acceleration and VRAM-aware context capping.
+
 ## [0.1.2] — 2026-02-24
 
 ### Changed

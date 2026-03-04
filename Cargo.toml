@@ -1,6 +1,6 @@
 [package]
 name = "safeclaw"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Sandboxed autonomous AI agent with tool execution, knowledge graph, and multi-interface control"
 
@@ -8,11 +8,15 @@ description = "Sandboxed autonomous AI agent with tool execution, knowledge grap
 default = []
 local = ["dep:llama-gguf"]
 local-cuda = ["local", "llama-gguf/cuda"]
+daimon = ["dep:daimon"]
 
 [dependencies]
 
 # Local LLM inference (optional — enabled with --features local)
-llama-gguf = { git = "https://github.com/Lexmata/llama-gguf.git", branch = "main", default-features = false, features = ["cpu"], optional = true }
+llama-gguf = { version = "0.11.3", default-features = false, features = ["cpu"], optional = true }
+
+# Agentic framework (optional — enabled with --features daimon)
+daimon = { version = "0.16", default-features = false, features = ["macros", "mcp"], optional = true }
 
 # Hardware-aware local LLM model recommendations
 llmfit-core = "0.4"

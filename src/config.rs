@@ -92,6 +92,67 @@ pub struct Config {
 
     #[serde(default)]
     pub memory: MemoryConfig,
+
+    #[serde(default)]
+    pub mcp: McpConfig,
+}
+
+// -- MCP ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub servers: Vec<McpServerEntry>,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            servers: Vec::new(),
+        }
+    }
+}
+
+/// A single MCP server entry in the config.
+///
+/// ```toml
+/// [[mcp.servers]]
+/// name = "filesystem"
+/// transport = "stdio"
+/// command = "npx"
+/// args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+///
+/// [[mcp.servers]]
+/// name = "remote-tools"
+/// transport = "http"
+/// url = "http://localhost:8080/mcp"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpServerEntry {
+    pub name: String,
+
+    #[serde(default = "default_mcp_transport")]
+    pub transport: String,
+
+    /// For stdio transport: the command to spawn.
+    #[serde(default)]
+    pub command: String,
+
+    /// For stdio transport: arguments to the command.
+    #[serde(default)]
+    pub args: Vec<String>,
+
+    /// For http transport: the URL of the MCP server.
+    #[serde(default)]
+    pub url: String,
+
+    /// Optional prefix for tool names (defaults to server name).
+    #[serde(default)]
+    pub tool_prefix: Option<String>,
+}
+
+fn default_mcp_transport() -> String {
+    "stdio".into()
 }
 
 // -- Federation --------------------------------------------------------------
@@ -314,6 +375,16 @@ pub struct LlmConfig {
     /// Maximum tokens to generate per response.
     #[serde(default = "default_max_tokens")]
     pub max_tokens: usize,
+
+    /// Use GPU acceleration for local inference (requires CUDA).
+    #[serde(default)]
+    pub use_gpu: bool,
+
+    /// Maximum context length for local inference.
+    /// Caps the model's KV cache size to reduce VRAM usage.
+    /// If unset, uses the model's native context length.
+    #[serde(default)]
+    pub max_context_len: Option<usize>,
 
 }
 
@@ -936,6 +1007,8 @@ impl Default for LlmConfig {
             temperature: default_temperature(),
             top_p: default_top_p(),
             max_tokens: default_max_tokens(),
+            use_gpu: false,
+            max_context_len: None,
         }
     }
 }
@@ -1102,6 +1175,7 @@ impl Default for Config {
             federation: FederationConfig::default(),
             plugins: PluginsConfig::default(),
             memory: MemoryConfig::default(),
+            mcp: McpConfig::default(),
         }
     }
 }
