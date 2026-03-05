@@ -55,7 +55,7 @@ impl Tool for KnowledgeGraphTool {
 
     async fn execute(&self, params: serde_json::Value, ctx: &ToolContext) -> Result<ToolOutput> {
         let action = params.get("action").and_then(|v| v.as_str()).unwrap_or_default();
-        let kg = KnowledgeGraph::new(ctx.db.clone());
+        let kg = KnowledgeGraph::new(ctx.db.clone(), ctx.db_read.clone());
 
         debug!(action, "knowledge graph action");
 
@@ -216,9 +216,13 @@ mod tests {
         std::fs::create_dir_all(&sandbox_dir).unwrap();
         std::fs::create_dir_all(&trash_dir).unwrap();
 
+        let db = db::test_db();
+        let db_read = db.clone();
+
         ToolContext {
             sandbox: SandboxedFs::new(sandbox_dir).unwrap(),
-            db: db::test_db(),
+            db,
+            db_read,
             http_client: reqwest::Client::new(),
             messaging: Arc::new(MessagingManager::new()),
             trash: Arc::new(TrashManager::new(&trash_dir).unwrap()),
@@ -254,7 +258,7 @@ mod tests {
     async fn add_edge_success() {
         let ctx = test_ctx();
         let tool = KnowledgeGraphTool::new();
-        let kg = KnowledgeGraph::new(ctx.db.clone());
+        let kg = KnowledgeGraph::new(ctx.db.clone(), ctx.db_read.clone());
         let a = kg.add_node("A", "t", "", 1.0).await.unwrap();
         let b = kg.add_node("B", "t", "", 1.0).await.unwrap();
         let result = tool.execute(
@@ -280,7 +284,7 @@ mod tests {
     async fn search_finds_results() {
         let ctx = test_ctx();
         let tool = KnowledgeGraphTool::new();
-        let kg = KnowledgeGraph::new(ctx.db.clone());
+        let kg = KnowledgeGraph::new(ctx.db.clone(), ctx.db_read.clone());
         kg.add_node("Quick brown fox", "animal", "The fox jumps", 1.0).await.unwrap();
         let result = tool.execute(
             serde_json::json!({"action": "search", "query": "brown fox"}),
@@ -305,7 +309,7 @@ mod tests {
     async fn neighbors_success() {
         let ctx = test_ctx();
         let tool = KnowledgeGraphTool::new();
-        let kg = KnowledgeGraph::new(ctx.db.clone());
+        let kg = KnowledgeGraph::new(ctx.db.clone(), ctx.db_read.clone());
         let a = kg.add_node("X", "t", "", 1.0).await.unwrap();
         let b = kg.add_node("Y", "t", "", 1.0).await.unwrap();
         kg.add_edge(a, b, "links", 1.0).await.unwrap();

@@ -6,6 +6,7 @@ use tracing::{error, info};
 
 use super::routes::DashState;
 use crate::memory::knowledge::KnowledgeGraph;
+use crate::skills::SkillManager;
 
 #[derive(Serialize)]
 pub struct StatusResponse {
@@ -469,7 +470,7 @@ pub async fn get_knowledge_node(
     State(state): State<DashState>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let kg = KnowledgeGraph::new(state.db.clone());
+    let kg = KnowledgeGraph::new(state.db.clone(), state.db_read.clone());
     let node = kg.get_node(id).await.map_err(|e| {
         error!("knowledge node {id}: {e}");
         StatusCode::NOT_FOUND
@@ -481,7 +482,7 @@ pub async fn get_knowledge_neighbors(
     State(state): State<DashState>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let kg = KnowledgeGraph::new(state.db.clone());
+    let kg = KnowledgeGraph::new(state.db.clone(), state.db_read.clone());
     let neighbors = kg.neighbors(id, None).await.map_err(|e| {
         error!("knowledge neighbors: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -517,7 +518,7 @@ pub async fn search_knowledge(
     if query.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let kg = KnowledgeGraph::new(state.db.clone());
+    let kg = KnowledgeGraph::new(state.db.clone(), state.db_read.clone());
     let nodes = kg.search(&query, 50).await.map_err(|e| {
         error!("knowledge search: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -528,7 +529,7 @@ pub async fn search_knowledge(
 pub async fn get_knowledge_stats(
     State(state): State<DashState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let kg = KnowledgeGraph::new(state.db.clone());
+    let kg = KnowledgeGraph::new(state.db.clone(), state.db_read.clone());
     let (nodes, edges) = kg.stats().await.map_err(|e| {
         error!("knowledge stats: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -561,8 +562,12 @@ pub async fn list_tools(
 pub async fn list_skills(
     State(state): State<DashState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let sm = state.agent.skill_manager.lock().await;
-    let skills = sm.list();
+    let (skills_dir, running_info, credentials, manually_stopped) = {
+        let sm = state.agent.skill_manager.lock().await;
+        sm.list_data()
+    };
+    let skills =
+        SkillManager::list_async(skills_dir, running_info, credentials, manually_stopped).await;
     Ok(Json(serde_json::to_value(skills).unwrap()))
 }
 
@@ -1236,8 +1241,10 @@ pub async fn reject_2fa(
 pub async fn get_security_overview(
     State(state): State<DashState>,
 ) -> Json<serde_json::Value> {
-    let audit_summary = state.agent.audit.summary().await;
-    let cost_summary = state.agent.cost_tracker.summary().await;
+    let (audit_summary, cost_summary) = tokio::join!(
+        state.agent.audit.summary(),
+        state.agent.cost_tracker.summary(),
+    );
     let rate_status = state.agent.rate_limiter.status();
     let twofa_pending = state.agent.twofa.pending();
 
@@ -1328,8 +1335,14 @@ pub async fn metrics(
         state.agent.tools.len(),
     ));
 
-    // Stats from DB
-    if let Ok(stats) = state.agent.memory.get_stats().await {
+    // Fetch stats, audit, and cost in parallel (stats uses db_read, others use db)
+    let (stats_result, audit, cost) = tokio::join!(
+        state.agent.memory.get_stats(),
+        state.agent.audit.summary(),
+        state.agent.cost_tracker.summary(),
+    );
+
+    if let Ok(stats) = stats_result {
         out.push_str(&format!(
             "# HELP safeclaw_ticks_total Total agent ticks executed.\n\
              # TYPE safeclaw_ticks_total counter\n\
@@ -1350,8 +1363,6 @@ pub async fn metrics(
         ));
     }
 
-    // Audit summary
-    let audit = state.agent.audit.summary().await;
     out.push_str(&format!(
         "# HELP safeclaw_audit_events_total Total audit log events.\n\
          # TYPE safeclaw_audit_events_total counter\n\
@@ -1376,9 +1387,6 @@ pub async fn metrics(
          safeclaw_pii_detections_total {}\n\n",
         audit.pii_detections,
     ));
-
-    // Cost tracking
-    let cost = state.agent.cost_tracker.summary().await;
     out.push_str(&format!(
         "# HELP safeclaw_llm_cost_today_usd Estimated LLM cost today in USD.\n\
          # TYPE safeclaw_llm_cost_today_usd gauge\n\

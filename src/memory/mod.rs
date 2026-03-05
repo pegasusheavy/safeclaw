@@ -23,18 +23,24 @@ pub struct MemoryManager {
     pub user_model: user_model::UserModel,
     pub embeddings: Option<embeddings::EmbeddingEngine>,
     db: Arc<Mutex<Connection>>,
+    db_read: Arc<Mutex<Connection>>,
 }
 
 impl MemoryManager {
-    pub fn new(db: Arc<Mutex<Connection>>, conversation_window: usize) -> Self {
+    pub fn new(
+        db: Arc<Mutex<Connection>>,
+        db_read: Arc<Mutex<Connection>>,
+        conversation_window: usize,
+    ) -> Self {
         Self {
             core: core::CoreMemory::new(db.clone()),
             conversation: conversation::ConversationMemory::new(db.clone(), conversation_window),
-            archival: archival::ArchivalMemory::new(db.clone()),
+            archival: archival::ArchivalMemory::new(db_read.clone()),
             episodic: episodic::EpisodicMemory::new(db.clone()),
             user_model: user_model::UserModel::new(db.clone()),
             embeddings: None,
             db,
+            db_read,
         }
     }
 
@@ -56,7 +62,7 @@ impl MemoryManager {
         if let Some(ref engine) = self.embeddings {
             match engine.search(query, "archival_memory", limit).await {
                 Ok(results) if !results.is_empty() => {
-                    let db = self.db.lock().await;
+                    let db = self.db_read.lock().await;
                     let mut entries = Vec::new();
                     for sr in &results {
                         if let Ok(entry) = db.query_row(
@@ -95,7 +101,7 @@ impl MemoryManager {
         query: &str,
         limit: usize,
     ) -> Result<Vec<knowledge::KnowledgeNode>> {
-        let kg = knowledge::KnowledgeGraph::new(self.db.clone());
+        let kg = knowledge::KnowledgeGraph::new(self.db.clone(), self.db_read.clone());
 
         if let Some(ref engine) = self.embeddings {
             match engine.search(query, "knowledge_nodes", limit).await {
@@ -152,7 +158,7 @@ impl MemoryManager {
 
     /// Get agent stats.
     pub async fn get_stats(&self) -> Result<AgentStats> {
-        let db = self.db.lock().await;
+        let db = self.db_read.lock().await;
         let stats = db.query_row(
             "SELECT total_ticks, total_actions, total_approved, total_rejected, last_tick_at, started_at
              FROM agent_stats WHERE id = 1",
@@ -189,7 +195,7 @@ impl MemoryManager {
 
     /// Get recent activity log entries.
     pub async fn recent_activity(&self, limit: usize, offset: usize) -> Result<Vec<ActivityEntry>> {
-        let db = self.db.lock().await;
+        let db = self.db_read.lock().await;
         let mut stmt = db.prepare(
             "SELECT id, action_type, summary, detail, status, created_at
              FROM activity_log ORDER BY id DESC LIMIT ?1 OFFSET ?2",
@@ -236,7 +242,9 @@ mod tests {
     use crate::db::test_db;
 
     fn make_manager() -> MemoryManager {
-        MemoryManager::new(test_db(), 50)
+        let db = test_db();
+        let db_read = db.clone();
+        MemoryManager::new(db, db_read, 50)
     }
 
     #[tokio::test]

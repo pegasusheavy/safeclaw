@@ -13,7 +13,7 @@ COPY config.example.toml ./
 
 # Cache buster — pass --build-arg CACHEBUST=$(date +%s) to force rebuild
 ARG CACHEBUST=1
-ARG CARGO_FEATURES="local-cuda"
+ARG CARGO_FEATURES=""
 RUN cargo build --release --features "${CARGO_FEATURES}"
 
 # Stage 2: Runtime (Debian slim)
