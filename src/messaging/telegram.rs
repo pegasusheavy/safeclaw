@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rusqlite::Connection;
 use teloxide::prelude::*;
-use teloxide::types::ChatAction;
+use teloxide::types::{ChatAction, InputFile, ParseMode};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -68,6 +68,112 @@ impl MessagingBackend for TelegramBackend {
                 format!("invalid telegram chat id: {channel}"),
             ))?;
         let _ = self.bot.send_chat_action(ChatId(chat_id), ChatAction::Typing).await;
+        Ok(())
+    }
+
+    fn supports_rich_messages(&self) -> bool {
+        true
+    }
+
+    async fn send_rich(&self, channel: &str, content: &super::RichContent) -> Result<()> {
+        use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ReplyMarkup};
+
+        let chat_id: i64 = channel
+            .parse()
+            .map_err(|_| crate::error::SafeAgentError::Messaging(
+                format!("invalid telegram chat id: {channel}"),
+            ))?;
+        let cid = ChatId(chat_id);
+
+        match content {
+            super::RichContent::Image { url, caption } => {
+                let file = InputFile::url(url.parse().map_err(|_| {
+                    crate::error::SafeAgentError::Messaging(format!("invalid image url: {url}"))
+                })?);
+                let mut req = self.bot.send_photo(cid, file);
+                if let Some(c) = caption {
+                    req = req.caption(c);
+                }
+                req.await.map_err(|e| {
+                    crate::error::SafeAgentError::Messaging(format!("telegram send_photo: {e}"))
+                })?;
+            }
+            super::RichContent::File {
+                url,
+                filename,
+                caption,
+            } => {
+                let file = InputFile::url(url.parse().map_err(|_| {
+                    crate::error::SafeAgentError::Messaging(format!("invalid file url: {url}"))
+                })?).file_name(filename.clone());
+                let mut req = self.bot.send_document(cid, file);
+                if let Some(c) = caption {
+                    req = req.caption(c);
+                }
+                req.await.map_err(|e| {
+                    crate::error::SafeAgentError::Messaging(format!("telegram send_document: {e}"))
+                })?;
+            }
+            super::RichContent::Buttons { text, buttons } => {
+                let keyboard_buttons: Vec<Vec<InlineKeyboardButton>> = buttons
+                    .iter()
+                    .map(|b| {
+                        vec![match b.style {
+                            super::rich::ButtonStyle::Link => {
+                                InlineKeyboardButton::url(
+                                    b.label.clone(),
+                                    b.data.parse().unwrap_or_else(|_| "https://example.com".parse().unwrap()),
+                                )
+                            }
+                            _ => InlineKeyboardButton::callback(b.label.clone(), b.data.clone()),
+                        }]
+                    })
+                    .collect();
+                let markup = InlineKeyboardMarkup::new(keyboard_buttons);
+                self.bot
+                    .send_message(cid, text)
+                    .reply_markup(ReplyMarkup::InlineKeyboard(markup))
+                    .await
+                    .map_err(|e| {
+                        crate::error::SafeAgentError::Messaging(format!("telegram buttons: {e}"))
+                    })?;
+            }
+            super::RichContent::Card {
+                title,
+                description,
+                image_url,
+                url,
+            } => {
+                let mut text = format!("<b>{title}</b>");
+                if let Some(d) = description {
+                    text.push_str(&format!("\n{d}"));
+                }
+                if let Some(u) = url {
+                    text.push_str(&format!("\n<a href=\"{u}\">Open</a>"));
+                }
+                if let Some(img) = image_url {
+                    let file = InputFile::url(img.parse().map_err(|_| {
+                        crate::error::SafeAgentError::Messaging(format!("invalid image url: {img}"))
+                    })?);
+                    self.bot
+                        .send_photo(cid, file)
+                        .caption(text)
+                        .parse_mode(ParseMode::Html)
+                        .await
+                        .map_err(|e| {
+                            crate::error::SafeAgentError::Messaging(format!("telegram card: {e}"))
+                        })?;
+                } else {
+                    self.bot
+                        .send_message(cid, &text)
+                        .parse_mode(ParseMode::Html)
+                        .await
+                        .map_err(|e| {
+                            crate::error::SafeAgentError::Messaging(format!("telegram card: {e}"))
+                        })?;
+                }
+            }
+        }
         Ok(())
     }
 }

@@ -308,6 +308,8 @@ pub fn build(
         // Unauthenticated endpoints — below auth layer
         // Generic webhook (self-authenticating via token in URL path)
         .route("/api/webhook/{token}", post(webhook::webhook_handler))
+        // Slack Events API (verified by Slack signing secret)
+        .route("/api/messaging/slack/events", post(messaging_webhook::slack_events))
         .route("/healthz", get(handlers::healthz))
         // Onboarding wizard — exempt from auth so the wizard works before any user exists
         .route("/api/onboarding/status", get(handlers::onboarding_status))

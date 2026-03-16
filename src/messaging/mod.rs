@@ -2,17 +2,24 @@ pub mod bridge;
 pub mod commands;
 #[cfg(feature = "discord")]
 pub mod discord;
+pub mod email;
+pub mod matrix;
+pub mod rich;
 pub mod signal;
+pub mod slack;
 pub mod telegram;
 pub mod twilio;
 pub mod whatsapp;
 
+use std::any::Any;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use tracing::{error, info};
 
 use crate::error::Result;
+
+pub use rich::RichContent;
 
 // ---------------------------------------------------------------------------
 // Messaging backend trait
@@ -22,6 +29,11 @@ use crate::error::Result;
 /// platforms all implement this trait.
 #[async_trait]
 pub trait MessagingBackend: Send + Sync {
+    /// Downcast support for tools that need provider-specific APIs.
+    fn as_any(&self) -> Option<&dyn Any> {
+        None
+    }
+
     /// Platform identifier (e.g. "telegram", "whatsapp").
     fn platform_name(&self) -> &str;
 
@@ -34,6 +46,16 @@ pub trait MessagingBackend: Send + Sync {
     /// Send a typing/composing indicator. Backends that don't support
     /// typing indicators should return Ok(()) silently.
     async fn send_typing(&self, channel: &str) -> Result<()>;
+
+    /// Whether this backend supports rich content (images, files, buttons).
+    fn supports_rich_messages(&self) -> bool {
+        false
+    }
+
+    /// Send rich content. Falls back to text on backends that don't override.
+    async fn send_rich(&self, channel: &str, content: &RichContent) -> Result<()> {
+        self.send_message(channel, &content.to_text_fallback()).await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +128,18 @@ impl MessagingManager {
             if let Some(channel) = self.primary_channels.get(platform) {
                 if let Err(e) = backend.send_typing(channel).await {
                     error!(platform, err = %e, "failed to send typing indicator");
+                }
+            }
+        }
+    }
+
+    /// Send rich content to the primary channel of every registered backend.
+    pub async fn send_rich_all(&self, content: &RichContent) {
+        for backend in &self.backends {
+            let platform = backend.platform_name();
+            if let Some(channel) = self.primary_channels.get(platform) {
+                if let Err(e) = backend.send_rich(channel, content).await {
+                    error!(platform, err = %e, "failed to send rich message");
                 }
             }
         }

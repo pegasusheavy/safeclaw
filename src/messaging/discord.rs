@@ -62,6 +62,60 @@ impl MessagingBackend for DiscordBackend {
         let _ = ChannelId::new(channel_id).broadcast_typing(&self.http).await;
         Ok(())
     }
+
+    fn supports_rich_messages(&self) -> bool {
+        true
+    }
+
+    async fn send_rich(
+        &self,
+        channel: &str,
+        content: &super::RichContent,
+    ) -> Result<()> {
+        let channel_id: u64 = channel
+            .parse()
+            .map_err(|_| crate::error::SafeAgentError::Messaging(
+                format!("invalid discord channel id: {channel}"),
+            ))?;
+        let cid = ChannelId::new(channel_id);
+
+        match content {
+            super::RichContent::Image { url, caption } => {
+                let embed = CreateEmbed::new()
+                    .image(url)
+                    .description(caption.as_deref().unwrap_or(""));
+                let msg = CreateMessage::new().embed(embed);
+                cid.send_message(&self.http, msg).await.map_err(|e| {
+                    crate::error::SafeAgentError::Messaging(format!("discord image: {e}"))
+                })?;
+            }
+            super::RichContent::Card {
+                title,
+                description,
+                image_url,
+                url,
+            } => {
+                let mut embed = CreateEmbed::new().title(title);
+                if let Some(d) = description {
+                    embed = embed.description(d);
+                }
+                if let Some(img) = image_url {
+                    embed = embed.image(img);
+                }
+                if let Some(u) = url {
+                    embed = embed.url(u);
+                }
+                let msg = CreateMessage::new().embed(embed);
+                cid.send_message(&self.http, msg).await.map_err(|e| {
+                    crate::error::SafeAgentError::Messaging(format!("discord card: {e}"))
+                })?;
+            }
+            other => {
+                self.send_message(channel, &other.to_text_fallback()).await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -139,19 +139,26 @@ single `browser` tool (action dispatch pattern).
 
 ## 5. Communication & Messaging
 
-- [ ] **Email sending** — use OAuth tokens to send email (Gmail API,
-      Microsoft Graph). Currently read-only.
-- [ ] **Email monitoring** — watch inbox for important messages, summarize,
-      and notify. Draft replies for approval.
-- [ ] **SMS/iMessage bridge** — for users who don't use Telegram.
-- [ ] **Matrix/Signal support** — privacy-focused messaging alternatives.
-- [ ] **Slack workspace bot** — not just OAuth tokens, but an actual
-      Slack bot presence the agent can operate.
-- [ ] **Discord bot** — same as Slack; presence in Discord servers.
-- [ ] **Rich messaging** — send images, files, formatted cards, and
-      inline buttons (Telegram supports all of these).
-- [ ] **Group chat awareness** — understand multi-user conversations,
-      only respond when addressed or relevant.
+- [x] **Email sending** — Gmail API and Microsoft Graph via OAuth tokens.
+      Email tool supports send, inbox listing. OAuth scopes upgraded to
+      include `gmail.send` and `Mail.Send`.
+- [x] **Email monitoring** — email tool provides inbox listing; agent can
+      check inbox on demand or via cron. Background polling configurable
+      via `email.monitor_interval_secs`.
+- [x] **SMS/iMessage bridge** — Twilio SMS, iMessage (AppleScript bridge),
+      and Android SMS (Termux bridge) all implemented.
+- [x] **Matrix/Signal support** — Signal via bridge backend; Matrix via
+      Client-Server API with `/sync` long-polling for receiving messages.
+- [x] **Slack workspace bot** — Slack Web API for sending (with Block Kit
+      for rich content), Events API endpoint for receiving messages.
+- [x] **Discord bot** — full Serenity gateway integration with embeds,
+      group chat gating, and @mention detection (feature-gated).
+- [x] **Rich messaging** — `RichContent` enum (Image, File, Buttons, Card)
+      with `send_rich` on `MessagingBackend`. Implemented natively for
+      Telegram (photos, documents, inline keyboards, HTML cards), Discord
+      (embeds), and Slack (Block Kit). Other backends fall back to text.
+- [x] **Group chat awareness** — Telegram, Discord, and Slack all gate on
+      @mentions and reply-to-bot. Configurable allowed channels/guilds/rooms.
 
 ---
 
