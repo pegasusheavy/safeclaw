@@ -1,6 +1,8 @@
 pub mod actions;
 pub mod cron_runner;
+pub mod personas;
 pub mod reasoning;
+pub mod sessions;
 pub mod tick;
 pub mod tool_parse;
 

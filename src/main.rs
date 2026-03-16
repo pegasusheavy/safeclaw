@@ -163,9 +163,13 @@ async fn main() {
         return;
     }
 
+    // Shared reference for tools that need access to the agent (delegate, plan).
+    // Set after the agent is constructed via OnceLock + Weak to avoid cycles.
+    let agent_ref = std::sync::Arc::new(std::sync::OnceLock::new());
+
     // Build the tool registry
     #[allow(unused_mut)]
-    let mut tool_registry = build_tool_registry(&config, &data_dir);
+    let mut tool_registry = build_tool_registry(&config, &data_dir, &agent_ref);
 
     // Connect to MCP servers (daimon bridge)
     #[cfg(feature = "daimon")]
@@ -443,6 +447,14 @@ async fn main() {
         }
     };
 
+    // Wire the agent reference for delegate/plan tools
+    agent_ref.set(std::sync::Arc::downgrade(&agent)).ok();
+
+    // Seed default specialist personas
+    if let Err(e) = crate::agent::personas::seed_defaults(&agent.ctx.db).await {
+        warn!("failed to seed default personas: {e}");
+    }
+
     // Migrate any existing plaintext PII to encrypted form
     if let Err(e) = agent.user_manager.migrate_encrypt_pii().await {
         warn!("PII migration warning: {e}");
@@ -646,7 +658,11 @@ async fn maybe_start_discord(
 }
 
 /// Build the tool registry from config.
-fn build_tool_registry(config: &Config, _data_dir: &std::path::Path) -> ToolRegistry {
+fn build_tool_registry(
+    config: &Config,
+    _data_dir: &std::path::Path,
+    agent_ref: &std::sync::Arc<std::sync::OnceLock<std::sync::Weak<crate::agent::Agent>>>,
+) -> ToolRegistry {
     use crate::tools::*;
 
     let mut registry = ToolRegistry::new();
@@ -689,6 +705,8 @@ fn build_tool_registry(config: &Config, _data_dir: &std::path::Path) -> ToolRegi
         registry.register(Box::new(sessions::SessionsHistoryTool));
         registry.register(Box::new(sessions::SessionsSendTool));
         registry.register(Box::new(sessions::SessionsSpawnTool));
+        registry.register(Box::new(delegate::DelegateTool::new(agent_ref.clone())));
+        registry.register(Box::new(plan::PlanTool::new(agent_ref.clone())));
     }
 
     if config.tools.cron.enabled {

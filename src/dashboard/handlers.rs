@@ -425,6 +425,78 @@ pub async fn update_persona(
     }
 }
 
+// -- Specialist Personas -------------------------------------------------
+
+/// List all specialist personas.
+pub async fn list_personas(
+    State(state): State<DashState>,
+) -> Json<serde_json::Value> {
+    match crate::agent::personas::list_personas(&state.db).await {
+        Ok(personas) => Json(serde_json::json!({ "personas": personas })),
+        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CreatePersona {
+    pub id: String,
+    pub name: String,
+    pub personality: String,
+    #[serde(default)]
+    pub tools: String,
+}
+
+/// Create a new specialist persona.
+pub async fn create_persona(
+    State(state): State<DashState>,
+    Json(body): Json<CreatePersona>,
+) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
+    let db = state.db.lock().await;
+    match db.execute(
+        "INSERT INTO personas (id, name, personality, tools) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![body.id, body.name, body.personality, body.tools],
+    ) {
+        Ok(_) => Ok((
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "ok": true, "id": body.id })),
+        )),
+        Err(e) => Ok((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+        )),
+    }
+}
+
+/// Update an existing specialist persona.
+pub async fn update_specialist_persona(
+    State(state): State<DashState>,
+    Path(id): Path<String>,
+    Json(body): Json<CreatePersona>,
+) -> Json<serde_json::Value> {
+    let db = state.db.lock().await;
+    match db.execute(
+        "UPDATE personas SET name = ?1, personality = ?2, tools = ?3 WHERE id = ?4",
+        rusqlite::params![body.name, body.personality, body.tools, id],
+    ) {
+        Ok(0) => Json(serde_json::json!({ "ok": false, "error": "not found" })),
+        Ok(_) => Json(serde_json::json!({ "ok": true })),
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    }
+}
+
+/// Delete a specialist persona.
+pub async fn delete_persona(
+    State(state): State<DashState>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let db = state.db.lock().await;
+    match db.execute("DELETE FROM personas WHERE id = ?1", [&id]) {
+        Ok(0) => Json(serde_json::json!({ "ok": false, "error": "not found" })),
+        Ok(_) => Json(serde_json::json!({ "ok": true })),
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    }
+}
+
 // -- Knowledge Graph -----------------------------------------------------
 
 pub async fn get_knowledge_nodes(

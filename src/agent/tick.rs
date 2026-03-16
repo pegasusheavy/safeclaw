@@ -26,6 +26,13 @@ impl Agent {
             error!(err = %e, "background goal processing failed");
         }
 
+        // Process pending sessions (multi-agent)
+        if self.config.sessions.enabled {
+            if let Err(e) = self.process_pending_sessions().await {
+                error!(err = %e, "session processing failed");
+            }
+        }
+
         // Memory consolidation: periodically summarize old memories
         if let Err(e) = self.consolidate_memories().await {
             error!(err = %e, "memory consolidation failed");
