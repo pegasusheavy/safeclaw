@@ -7,6 +7,7 @@ pub mod oauth;
 pub mod routes;
 pub mod skill_ext;
 pub mod sse;
+pub mod webhook;
 
 use std::sync::Arc;
 

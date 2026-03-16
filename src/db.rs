@@ -470,6 +470,20 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
         info!("oauth_tokens migration complete");
     }
 
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS api_tokens (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            token_hash  TEXT NOT NULL UNIQUE,
+            scopes      TEXT NOT NULL DEFAULT '*',
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            last_used   TEXT,
+            enabled     INTEGER NOT NULL DEFAULT 1
+        );
+        ",
+    )?;
+
     info!("database migrations complete");
     Ok(())
 }
@@ -544,6 +558,7 @@ mod tests {
             "episodes",
             "user_profiles",
             "memory_embeddings",
+            "api_tokens",
         ];
 
         for table in tables {

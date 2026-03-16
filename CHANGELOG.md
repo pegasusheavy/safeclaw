@@ -5,6 +5,23 @@ All notable changes to SafeClaw are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-03-04
+
+### Added
+
+- **Generic webhook endpoint** (`POST /api/webhook/{token}`) — accepts any HTTP
+  body from any service (GitHub, Bitbucket, Jira, Slack, GitLab, PagerDuty,
+  Discord, Linear, etc.), auto-detects the source platform from headers,
+  extracts event types, and routes the raw payload through the agent to the
+  appropriate skill.  Returns 200 OK immediately; processing is asynchronous.
+- **API token management** — SHA-256 hashed tokens stored in SQLite with global
+  (`*`) or per-skill scoping.  Dashboard CRUD via `GET/POST /api/tokens` and
+  `PUT/DELETE /api/tokens/{id}` (JWT-protected).  Tokens use `sc_` prefix with
+  32 random bytes.
+- **`api_tokens` database table** — new migration adds token storage with
+  `id`, `name`, `token_hash` (unique), `scopes`, `created_at`, `last_used`,
+  and `enabled` columns.
+
 ## [0.4.0] — 2026-03-05
 
 ### Added
