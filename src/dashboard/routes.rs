@@ -21,6 +21,7 @@ use super::messaging_webhook;
 use super::oauth;
 use super::skill_ext;
 use super::sse;
+use super::webhook;
 
 /// State shared across all routes.
 #[derive(Clone)]
@@ -295,11 +296,18 @@ pub fn build(
         .route("/api/federation/peers", get(handlers::federation_peers))
         .route("/api/federation/peers", post(handlers::federation_add_peer))
         .route("/api/federation/peers/{id}", delete(handlers::federation_remove_peer))
+        // API — Webhook Tokens (management)
+        .route("/api/tokens", get(webhook::list_tokens))
+        .route("/api/tokens", post(webhook::create_token))
+        .route("/api/tokens/{id}", put(webhook::update_token))
+        .route("/api/tokens/{id}", delete(webhook::delete_token))
         // SSE
         .route("/api/events", get(sse::events))
         // Auth middleware — applied to all routes above
         .layer(middleware::from_fn_with_state(state.clone(), auth::require_auth))
-        // Unauthenticated endpoints (health check, metrics, federation sync, onboarding) — below auth layer
+        // Unauthenticated endpoints — below auth layer
+        // Generic webhook (self-authenticating via token in URL path)
+        .route("/api/webhook/{token}", post(webhook::webhook_handler))
         .route("/healthz", get(handlers::healthz))
         // Onboarding wizard — exempt from auth so the wizard works before any user exists
         .route("/api/onboarding/status", get(handlers::onboarding_status))
