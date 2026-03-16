@@ -5,6 +5,63 @@ All notable changes to SafeClaw are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-03-05
+
+### Added
+
+- **Self-sandboxing binary** — the process applies kernel-level isolation on
+  startup without requiring Docker or any container runtime.
+- **Linux: seccomp-bpf syscall filter** — blocks 21 dangerous syscalls (ptrace,
+  mount, chroot, reboot, kernel module loading, BPF, perf_event_open, etc.)
+  with EPERM.  Inherited by all child processes including skills and exec
+  commands.  Uses the `seccompiler` crate from the Firecracker project.
+- **Linux: capability dropping** — clears all 42 bounding capabilities on
+  startup via `prctl(PR_CAPBSET_DROP)`, preventing privilege escalation even
+  when running as root.
+- **Linux: `PR_SET_NO_NEW_PRIVS`** — prevents child processes from gaining
+  privileges via setuid binaries.
+- **macOS: Seatbelt sandbox** — applies a deny-default Sandbox Profile Language
+  (SBPL) policy via `sandbox_init(3)` FFI.  Restricts filesystem writes to
+  data/config dirs, allows read-only system paths and Homebrew, permits network
+  and process fork/exec for skills.
+- **`SandboxStatus` struct** — tracks which isolation layers are active and logs
+  a structured summary at startup.
+- **Platform-dispatched sandbox orchestrator** (`src/security/sandbox.rs`) —
+  applies Linux (4 layers) or macOS (Seatbelt) isolation automatically based on
+  the target OS.
+
+### Changed
+
+- **Landlock always applied** — removed `NO_JAIL=1` bypass; Landlock filesystem
+  restrictions are now unconditional on Linux 5.13+.
+- **Dockerfile simplified** — removed chroot jail entrypoint and `SYS_ADMIN`
+  capability.  Runs as `USER safeclaw` with direct `ENTRYPOINT ["safeclaw"]`.
+  Docker is now optional; the binary provides equivalent isolation natively.
+- **docker-compose.yml** — removed `cap_add: SYS_ADMIN`.
+
+### Performance (from 0.3.0)
+
+- **Read-only DB connection** — added a second `SQLITE_OPEN_READ_ONLY`
+  connection for all SELECT queries, eliminating mutex contention between reads
+  and writes.
+- **Skill reconciliation TTL** — 30-second cooldown prevents redundant
+  filesystem scans on every tick and message.
+- **Cached `auto_approve` HashSet** — built once at startup instead of per
+  message.
+- **Parallelized dashboard handlers** — `/metrics` and `/security-overview`
+  fetch stats, audit, and cost summaries concurrently via `tokio::join!`.
+- **Optional `chromiumoxide` and `serenity`** — gated behind `browser` and
+  `discord` feature flags, saving ~120s compile time in default builds.
+- **Async skill listing** — `list_async()`/`list_data()` avoids blocking the
+  tokio runtime during directory scans.
+
+### Fixed
+
+- **`user_profiles` UPSERT** — the `ON CONFLICT(user_id, key)` clause silently
+  failed when `user_id` was NULL due to SQL NULL inequality semantics.  Now
+  stores empty string for the global profile so the unique constraint fires
+  correctly.
+
 ## [0.3.0] — 2026-03-04
 
 ### Added
