@@ -17,6 +17,9 @@ ARG CARGO_FEATURES=""
 RUN cargo build --release --features "${CARGO_FEATURES}"
 
 # Stage 2: Runtime (Debian slim)
+# NOTE: Docker is optional. The safeclaw binary self-sandboxes on startup
+# using Landlock, seccomp-bpf, and capability dropping (Linux) or Seatbelt
+# (macOS). Running natively without Docker provides equivalent isolation.
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -53,18 +56,13 @@ RUN pip install --no-cache-dir --break-system-packages \
 # Copy safeclaw binary
 COPY --from=builder /build/target/release/safeclaw /usr/local/bin/safeclaw
 
-# Chroot jail entrypoint script
-COPY scripts/chroot-jail.sh /usr/local/bin/chroot-jail.sh
-RUN chmod +x /usr/local/bin/chroot-jail.sh
-
-# Non-root user for running safeclaw
+# Non-root user
 ARG SAFE_UID=1000
 ARG SAFE_GID=1000
 RUN groupadd -g "${SAFE_GID}" safeclaw && \
     useradd -u "${SAFE_UID}" -g safeclaw -m -d /home/safeclaw -s /bin/bash safeclaw
 
-# Pre-create the jail root and volume mount points
-RUN mkdir -p /jail /data/safeclaw/skills /config/safeclaw /home/safeclaw && \
+RUN mkdir -p /data/safeclaw/skills /config/safeclaw /home/safeclaw && \
     chown -R safeclaw:safeclaw /data/safeclaw /config/safeclaw /home/safeclaw
 
 ENV XDG_DATA_HOME=/data
@@ -75,4 +73,5 @@ EXPOSE 3031 443
 
 VOLUME ["/data/safeclaw", "/config/safeclaw"]
 
-ENTRYPOINT ["chroot-jail.sh"]
+USER safeclaw
+ENTRYPOINT ["safeclaw"]

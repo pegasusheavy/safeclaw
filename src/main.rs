@@ -90,20 +90,19 @@ async fn main() {
     };
     info!(root = %sandbox.root().display(), "sandbox initialized");
 
-    // Apply kernel-level Landlock filesystem sandbox (Linux 5.13+).
-    // Skipped when NO_JAIL=1 — the container/deployment already provides
-    // isolation so the extra restriction just blocks legitimate binaries.
-    if std::env::var("NO_JAIL").as_deref() == Ok("1") {
-        info!("landlock sandbox skipped (NO_JAIL=1)");
-    } else {
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from(".config"))
-            .join("safeclaw");
-        match crate::security::apply_landlock(&data_dir, &config_dir) {
-            Ok(()) => {}
-            Err(e) => warn!("landlock sandbox not applied: {e}"),
-        }
-    }
+    let config_dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from(".config"))
+        .join("safeclaw");
+    let sandbox_status = crate::security::sandbox::apply_sandbox(&data_dir, &config_dir);
+    info!(
+        layers = sandbox_status.active_layers(),
+        no_new_privs = sandbox_status.no_new_privs,
+        capabilities = sandbox_status.capabilities_dropped,
+        landlock = sandbox_status.landlock,
+        seccomp = sandbox_status.seccomp,
+        seatbelt = sandbox_status.seatbelt,
+        "sandbox status"
+    );
 
     // Initialize trash system
     let trash = match trash::TrashManager::new(&data_dir) {

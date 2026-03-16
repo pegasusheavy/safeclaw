@@ -3,7 +3,14 @@ pub mod capabilities;
 pub mod cost_tracker;
 pub mod pii;
 pub mod rate_limiter;
+pub mod sandbox;
 pub mod twofa;
+
+#[cfg(target_os = "linux")]
+pub mod seccomp;
+
+#[cfg(target_os = "macos")]
+pub mod seatbelt;
 
 use std::path::{Path, PathBuf};
 
@@ -436,6 +443,26 @@ pub unsafe fn apply_process_limits(limits: &ProcessLimits) -> std::io::Result<()
     set(Resource::CPU, limits.max_cpu_secs)?;
     set(Resource::NPROC, limits.max_processes)?;
 
+    Ok(())
+}
+
+// ===========================================================================
+// Capability dropping (Linux only)
+// ===========================================================================
+
+#[cfg(target_os = "linux")]
+pub fn drop_capabilities() -> std::result::Result<(), String> {
+    // CAP_LAST_CAP is 41 as of Linux 6.x; iterate 0..=41 to cover all.
+    const CAP_LAST: i32 = 41;
+    let mut dropped = 0;
+    for cap in 0..=CAP_LAST {
+        let ret = unsafe { libc::prctl(libc::PR_CAPBSET_DROP, cap, 0, 0, 0) };
+        if ret == 0 {
+            dropped += 1;
+        }
+        // EINVAL means the capability doesn't exist on this kernel — skip
+    }
+    info!(dropped, "bounding capabilities dropped");
     Ok(())
 }
 

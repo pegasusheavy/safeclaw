@@ -102,6 +102,7 @@ rlimit = "0.10"
 # Linux-only kernel sandboxing
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
+seccompiler = "0.5"
 
 [dev-dependencies]
 tempfile = "3"
