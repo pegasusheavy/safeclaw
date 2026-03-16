@@ -1,5 +1,6 @@
 pub mod bridge;
 pub mod commands;
+#[cfg(feature = "discord")]
 pub mod discord;
 pub mod signal;
 pub mod telegram;

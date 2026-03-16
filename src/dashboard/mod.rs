@@ -25,13 +25,14 @@ pub async fn serve(
     config: Config,
     agent: Arc<Agent>,
     db: Arc<Mutex<Connection>>,
+    db_read: Arc<Mutex<Connection>>,
     shutdown: broadcast::Receiver<()>,
     tls: Option<TlsConfig>,
     messaging: Arc<MessagingManager>,
     trash: Arc<TrashManager>,
     installer: BinaryInstaller,
 ) -> Result<()> {
-    let app = routes::build(agent, config.clone(), db, messaging, trash, installer)?;
+    let app = routes::build(agent, config.clone(), db, db_read, messaging, trash, installer)?;
 
     // If ACME TLS is configured, serve over HTTPS using rustls-acme.
     // Otherwise fall back to plain HTTP on the dashboard_bind address.

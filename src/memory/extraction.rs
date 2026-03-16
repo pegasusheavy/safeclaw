@@ -119,7 +119,7 @@ pub async fn extract_from_conversation(
         }
     };
 
-    let kg = KnowledgeGraph::new(db.clone());
+    let kg = KnowledgeGraph::new(db.clone(), db.clone());
     let user_model = UserModel::new(db.clone());
     let episodic = EpisodicMemory::new(db.clone());
 

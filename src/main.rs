@@ -90,20 +90,19 @@ async fn main() {
     };
     info!(root = %sandbox.root().display(), "sandbox initialized");
 
-    // Apply kernel-level Landlock filesystem sandbox (Linux 5.13+).
-    // Skipped when NO_JAIL=1 — the container/deployment already provides
-    // isolation so the extra restriction just blocks legitimate binaries.
-    if std::env::var("NO_JAIL").as_deref() == Ok("1") {
-        info!("landlock sandbox skipped (NO_JAIL=1)");
-    } else {
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from(".config"))
-            .join("safeclaw");
-        match crate::security::apply_landlock(&data_dir, &config_dir) {
-            Ok(()) => {}
-            Err(e) => warn!("landlock sandbox not applied: {e}"),
-        }
-    }
+    let config_dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from(".config"))
+        .join("safeclaw");
+    let sandbox_status = crate::security::sandbox::apply_sandbox(&data_dir, &config_dir);
+    info!(
+        layers = sandbox_status.active_layers(),
+        no_new_privs = sandbox_status.no_new_privs,
+        capabilities = sandbox_status.capabilities_dropped,
+        landlock = sandbox_status.landlock,
+        seccomp = sandbox_status.seccomp,
+        seatbelt = sandbox_status.seatbelt,
+        "sandbox status"
+    );
 
     // Initialize trash system
     let trash = match trash::TrashManager::new(&data_dir) {
@@ -148,6 +147,15 @@ async fn main() {
         }
     };
     let db = Arc::new(Mutex::new(db));
+
+    // Open read-only connection for SELECT queries (reduces mutex contention)
+    let db_read = match db::open_readonly(&db_path) {
+        Ok(d) => Arc::new(Mutex::new(d)),
+        Err(e) => {
+            error!("failed to open read-only database: {e}");
+            return;
+        }
+    };
 
     // Handle --check
     if args.iter().any(|a| a == "--check") {
@@ -288,6 +296,7 @@ async fn main() {
     }
 
     // Register Discord backend (if enabled)
+    #[cfg(feature = "discord")]
     if config.discord.enabled {
         match std::env::var("DISCORD_BOT_TOKEN") {
             Ok(token) => {
@@ -338,6 +347,7 @@ async fn main() {
     let agent = match Agent::new(
         config.clone(),
         db.clone(),
+        db_read.clone(),
         sandbox,
         tool_registry,
         messaging.clone(),
@@ -382,22 +392,7 @@ async fn main() {
     };
 
     // Start Discord gateway (if enabled)
-    let _discord_shutdown = if config.discord.enabled
-        && std::env::var("DISCORD_BOT_TOKEN").is_ok()
-    {
-        match messaging::discord::start(config.discord.clone(), agent.clone()).await {
-            Ok(tx) => {
-                info!("discord bot started");
-                Some(tx)
-            }
-            Err(e) => {
-                error!("failed to start discord bot: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let _discord_shutdown = maybe_start_discord(&config, &agent).await;
 
     // Start WhatsApp bridge (if enabled)
     if let Some(ref wa_backend) = whatsapp_backend {
@@ -487,13 +482,14 @@ async fn main() {
         let agent = agent.clone();
         let config = config.clone();
         let db = db.clone();
+        let db_read = db_read.clone();
         let shutdown_rx = shutdown_tx.subscribe();
         let tls = tls_config.clone();
         let messaging_clone = messaging.clone();
         let trash_clone = trash.clone();
         let installer = installer.clone();
         tokio::spawn(async move {
-            if let Err(e) = dashboard::serve(config, agent, db, shutdown_rx, tls, messaging_clone, trash_clone, installer).await {
+            if let Err(e) = dashboard::serve(config, agent, db, db_read, shutdown_rx, tls, messaging_clone, trash_clone, installer).await {
                 error!("dashboard error: {e}");
                 // If the dashboard (ACME cert acquisition) fails, kill the
                 // entire process so the container restarts.
@@ -526,8 +522,38 @@ async fn main() {
     info!("safeclaw stopped");
 }
 
+/// Start Discord gateway when the discord feature is enabled and configured.
+#[cfg(feature = "discord")]
+async fn maybe_start_discord(
+    config: &Config,
+    agent: &Arc<Agent>,
+) -> Option<tokio::sync::oneshot::Sender<()>> {
+    if config.discord.enabled && std::env::var("DISCORD_BOT_TOKEN").is_ok() {
+        match messaging::discord::start(config.discord.clone(), agent.clone()).await {
+            Ok(tx) => {
+                info!("discord bot started");
+                Some(tx)
+            }
+            Err(e) => {
+                error!("failed to start discord bot: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    }
+}
+
+#[cfg(not(feature = "discord"))]
+async fn maybe_start_discord(
+    _config: &Config,
+    _agent: &Arc<Agent>,
+) -> Option<tokio::sync::oneshot::Sender<()>> {
+    None
+}
+
 /// Build the tool registry from config.
-fn build_tool_registry(config: &Config, data_dir: &std::path::Path) -> ToolRegistry {
+fn build_tool_registry(config: &Config, _data_dir: &std::path::Path) -> ToolRegistry {
     use crate::tools::*;
 
     let mut registry = ToolRegistry::new();
@@ -549,10 +575,11 @@ fn build_tool_registry(config: &Config, data_dir: &std::path::Path) -> ToolRegis
         registry.register(Box::new(web::WebFetchTool));
     }
 
+    #[cfg(feature = "browser")]
     if config.tools.browser.enabled {
         registry.register(Box::new(browser::BrowserTool::new(
             config.tools.browser.headless,
-            data_dir.to_path_buf(),
+            _data_dir.to_path_buf(),
         )));
     }
 

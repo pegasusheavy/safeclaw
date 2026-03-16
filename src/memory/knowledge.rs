@@ -30,11 +30,14 @@ pub struct KnowledgeEdge {
 
 pub struct KnowledgeGraph {
     db: Arc<Mutex<Connection>>,
+    db_read: Arc<Mutex<Connection>>,
 }
 
 impl KnowledgeGraph {
-    pub fn new(db: Arc<Mutex<Connection>>) -> Self {
-        Self { db }
+    /// Create a KnowledgeGraph. Use `db` for writes, `db_read` for reads.
+    /// When only one connection is available, pass it for both.
+    pub fn new(db: Arc<Mutex<Connection>>, db_read: Arc<Mutex<Connection>>) -> Self {
+        Self { db, db_read }
     }
 
     pub async fn add_node(
@@ -68,7 +71,7 @@ impl KnowledgeGraph {
     }
 
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<KnowledgeNode>> {
-        let db = self.db.lock().await;
+        let db = self.db_read.lock().await;
         let mut stmt = db.prepare(
             "SELECT n.id, n.label, n.node_type, n.content, n.confidence, n.created_at, n.updated_at
              FROM knowledge_nodes_fts fts
@@ -94,7 +97,7 @@ impl KnowledgeGraph {
     }
 
     pub async fn get_node(&self, id: i64) -> Result<KnowledgeNode> {
-        let db = self.db.lock().await;
+        let db = self.db_read.lock().await;
         let node = db.query_row(
             "SELECT id, label, node_type, content, confidence, created_at, updated_at
              FROM knowledge_nodes WHERE id = ?1",
@@ -119,7 +122,7 @@ impl KnowledgeGraph {
         node_id: i64,
         relation_filter: Option<&str>,
     ) -> Result<Vec<(KnowledgeEdge, KnowledgeNode)>> {
-        let db = self.db.lock().await;
+        let db = self.db_read.lock().await;
 
         let query = if relation_filter.is_some() {
             "SELECT e.id, e.source_id, e.target_id, e.relation, e.weight, e.metadata, e.created_at,
@@ -154,7 +157,7 @@ impl KnowledgeGraph {
         relations: &[&str],
         max_depth: usize,
     ) -> Result<Vec<KnowledgeNode>> {
-        let db = self.db.lock().await;
+        let db = self.db_read.lock().await;
 
         let relation_clause = if relations.is_empty() {
             String::new()
@@ -230,7 +233,7 @@ impl KnowledgeGraph {
     }
 
     pub async fn stats(&self) -> Result<(i64, i64)> {
-        let db = self.db.lock().await;
+        let db = self.db_read.lock().await;
         let nodes: i64 = db.query_row("SELECT COUNT(*) FROM knowledge_nodes", [], |r| r.get(0))?;
         let edges: i64 = db.query_row("SELECT COUNT(*) FROM knowledge_edges", [], |r| r.get(0))?;
         Ok((nodes, edges))
@@ -245,7 +248,8 @@ mod tests {
     #[tokio::test]
     async fn add_and_get_node() {
         let db = test_db();
-        let kg = KnowledgeGraph::new(db);
+        let db_read = db.clone();
+        let kg = KnowledgeGraph::new(db, db_read);
         let id = kg.add_node("Rust", "language", "Systems programming lang", 0.9).await.unwrap();
         assert!(id > 0);
         let node = kg.get_node(id).await.unwrap();
@@ -258,7 +262,8 @@ mod tests {
     #[tokio::test]
     async fn add_edge_and_neighbors() {
         let db = test_db();
-        let kg = KnowledgeGraph::new(db);
+        let db_read = db.clone();
+        let kg = KnowledgeGraph::new(db, db_read);
         let n1 = kg.add_node("Rust", "lang", "", 1.0).await.unwrap();
         let n2 = kg.add_node("Cargo", "tool", "", 1.0).await.unwrap();
         let eid = kg.add_edge(n1, n2, "uses", 1.0).await.unwrap();
@@ -272,7 +277,8 @@ mod tests {
     #[tokio::test]
     async fn neighbors_with_relation_filter() {
         let db = test_db();
-        let kg = KnowledgeGraph::new(db);
+        let db_read = db.clone();
+        let kg = KnowledgeGraph::new(db, db_read);
         let n1 = kg.add_node("A", "t", "", 1.0).await.unwrap();
         let n2 = kg.add_node("B", "t", "", 1.0).await.unwrap();
         let n3 = kg.add_node("C", "t", "", 1.0).await.unwrap();
@@ -286,7 +292,8 @@ mod tests {
     #[tokio::test]
     async fn search_finds_by_label() {
         let db = test_db();
-        let kg = KnowledgeGraph::new(db);
+        let db_read = db.clone();
+        let kg = KnowledgeGraph::new(db, db_read);
         kg.add_node("Tokio runtime", "library", "Async runtime for Rust", 1.0).await.unwrap();
         kg.add_node("Axum web", "library", "Web framework", 1.0).await.unwrap();
         let results = kg.search("Tokio", 10).await.unwrap();
@@ -297,7 +304,8 @@ mod tests {
     #[tokio::test]
     async fn stats_counts() {
         let db = test_db();
-        let kg = KnowledgeGraph::new(db);
+        let db_read = db.clone();
+        let kg = KnowledgeGraph::new(db, db_read);
         let (n0, e0) = kg.stats().await.unwrap();
         assert_eq!(n0, 0);
         assert_eq!(e0, 0);
@@ -312,14 +320,16 @@ mod tests {
     #[tokio::test]
     async fn get_node_nonexistent_errors() {
         let db = test_db();
-        let kg = KnowledgeGraph::new(db);
+        let db_read = db.clone();
+        let kg = KnowledgeGraph::new(db, db_read);
         assert!(kg.get_node(9999).await.is_err());
     }
 
     #[tokio::test]
     async fn duplicate_edge_is_ignored() {
         let db = test_db();
-        let kg = KnowledgeGraph::new(db);
+        let db_read = db.clone();
+        let kg = KnowledgeGraph::new(db, db_read);
         let a = kg.add_node("A", "t", "", 1.0).await.unwrap();
         let b = kg.add_node("B", "t", "", 1.0).await.unwrap();
         kg.add_edge(a, b, "rel", 1.0).await.unwrap();

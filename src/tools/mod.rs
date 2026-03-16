@@ -1,3 +1,4 @@
+#[cfg(feature = "browser")]
 pub mod browser;
 pub mod cron;
 pub mod exec;
@@ -70,6 +71,8 @@ pub struct ToolCall {
 pub struct ToolContext {
     pub sandbox: SandboxedFs,
     pub db: Arc<Mutex<Connection>>,
+    /// Read-only connection for SELECT queries (reduces mutex contention).
+    pub db_read: Arc<Mutex<Connection>>,
     pub http_client: reqwest::Client,
     pub messaging: Arc<MessagingManager>,
     pub trash: Arc<TrashManager>,
@@ -199,6 +202,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let sandbox = SandboxedFs::new(tmp.clone()).unwrap();
         let db = Arc::new(Mutex::new(rusqlite::Connection::open_in_memory().unwrap()));
+        let db_read = db.clone(); // In-memory: use same connection for tests
         let http_client = reqwest::Client::new();
         let messaging = Arc::new(MessagingManager::new());
         let trash = Arc::new(TrashManager::new(Path::new(&tmp)).unwrap());
@@ -206,6 +210,7 @@ mod tests {
         ToolContext {
             sandbox,
             db,
+            db_read,
             http_client,
             messaging,
             trash,

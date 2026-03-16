@@ -37,6 +37,7 @@ impl UserModel {
         source: &str,
     ) -> Result<()> {
         let db = self.db.lock().await;
+        let uid = user_id.unwrap_or("");
         db.execute(
             "INSERT INTO user_profiles (user_id, key, value, confidence, source)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -45,7 +46,7 @@ impl UserModel {
                  confidence = excluded.confidence,
                  source = excluded.source,
                  updated_at = datetime('now')",
-            rusqlite::params![user_id, key, value, confidence, source],
+            rusqlite::params![uid, key, value, confidence, source],
         )?;
         Ok(())
     }
@@ -53,21 +54,13 @@ impl UserModel {
     /// Get a specific profile entry by key.
     pub async fn get(&self, user_id: Option<&str>, key: &str) -> Result<Option<ProfileEntry>> {
         let db = self.db.lock().await;
-        let result = if let Some(uid) = user_id {
-            db.query_row(
-                "SELECT id, user_id, key, value, confidence, source, created_at, updated_at
-                 FROM user_profiles WHERE user_id = ?1 AND key = ?2",
-                rusqlite::params![uid, key],
-                map_profile,
-            )
-        } else {
-            db.query_row(
-                "SELECT id, user_id, key, value, confidence, source, created_at, updated_at
-                 FROM user_profiles WHERE user_id IS NULL AND key = ?1",
-                [key],
-                map_profile,
-            )
-        };
+        let uid = user_id.unwrap_or("");
+        let result = db.query_row(
+            "SELECT id, user_id, key, value, confidence, source, created_at, updated_at
+             FROM user_profiles WHERE user_id = ?1 AND key = ?2",
+            rusqlite::params![uid, key],
+            map_profile,
+        );
 
         match result {
             Ok(entry) => Ok(Some(entry)),
@@ -79,42 +72,26 @@ impl UserModel {
     /// Get the full profile for a user (all key-value pairs).
     pub async fn get_all(&self, user_id: Option<&str>) -> Result<Vec<ProfileEntry>> {
         let db = self.db.lock().await;
-
-        let entries = if let Some(uid) = user_id {
-            let mut stmt = db.prepare(
-                "SELECT id, user_id, key, value, confidence, source, created_at, updated_at
-                 FROM user_profiles WHERE user_id = ?1 ORDER BY key",
-            )?;
-            stmt.query_map([uid], map_profile)?
-                .filter_map(|r| r.ok())
-                .collect()
-        } else {
-            let mut stmt = db.prepare(
-                "SELECT id, user_id, key, value, confidence, source, created_at, updated_at
-                 FROM user_profiles WHERE user_id IS NULL ORDER BY key",
-            )?;
-            stmt.query_map([], map_profile)?
-                .filter_map(|r| r.ok())
-                .collect()
-        };
-
+        let uid = user_id.unwrap_or("");
+        let mut stmt = db.prepare(
+            "SELECT id, user_id, key, value, confidence, source, created_at, updated_at
+             FROM user_profiles WHERE user_id = ?1 ORDER BY key",
+        )?;
+        let entries = stmt
+            .query_map([uid], map_profile)?
+            .filter_map(|r| r.ok())
+            .collect();
         Ok(entries)
     }
 
     /// Remove a profile entry.
     pub async fn remove(&self, user_id: Option<&str>, key: &str) -> Result<bool> {
         let db = self.db.lock().await;
-        let changed = if let Some(uid) = user_id {
-            db.execute(
-                "DELETE FROM user_profiles WHERE user_id = ?1 AND key = ?2",
-                rusqlite::params![uid, key],
-            )?
-        } else {
-            db.execute(
-                "DELETE FROM user_profiles WHERE user_id IS NULL AND key = ?1",
-                [key],
-            )?
-        };
+        let uid = user_id.unwrap_or("");
+        let changed = db.execute(
+            "DELETE FROM user_profiles WHERE user_id = ?1 AND key = ?2",
+            rusqlite::params![uid, key],
+        )?;
         Ok(changed > 0)
     }
 

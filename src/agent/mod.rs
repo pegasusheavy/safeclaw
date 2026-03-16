@@ -34,6 +34,8 @@ use crate::users::{UserContext, UserManager};
 
 pub struct Agent {
     pub config: Config,
+    /// Cached HashSet of auto-approve tool names (avoids rebuilding on every message).
+    auto_approve: std::collections::HashSet<String>,
     pub memory: MemoryManager,
     pub approval_queue: ApprovalQueue,
     pub tools: ToolRegistry,
@@ -68,6 +70,7 @@ impl Agent {
     pub async fn new(
         config: Config,
         db: Arc<Mutex<Connection>>,
+        db_read: Arc<Mutex<Connection>>,
         sandbox: SandboxedFs,
         tools: ToolRegistry,
         messaging: Arc<MessagingManager>,
@@ -75,7 +78,7 @@ impl Agent {
         encryptor: Arc<FieldEncryptor>,
     ) -> Result<Self> {
         // Initialize memory (with optional embedding engine)
-        let mut memory = MemoryManager::new(db.clone(), config.conversation_window);
+        let mut memory = MemoryManager::new(db.clone(), db_read.clone(), config.conversation_window);
         memory.init(&config.core_personality).await?;
 
         let embed_host = if config.memory.embedding_host.is_empty() {
@@ -100,6 +103,7 @@ impl Agent {
         let ctx = ToolContext {
             sandbox: sandbox.clone(),
             db: db.clone(),
+            db_read: db_read.clone(),
             http_client,
             messaging: messaging.clone(),
             trash,
@@ -202,8 +206,16 @@ impl Agent {
         // User management
         let user_manager = UserManager::new(db.clone(), encryptor);
 
+        // Cache auto_approve tools as HashSet for O(1) lookup per message
+        let auto_approve: std::collections::HashSet<String> = config
+            .auto_approve_tools
+            .iter()
+            .cloned()
+            .collect();
+
         Ok(Self {
             config,
+            auto_approve,
             memory,
             approval_queue,
             tools,
@@ -311,12 +323,6 @@ impl Agent {
             .await?;
 
         let max_turns = self.config.max_tool_turns;
-        let auto_approve: std::collections::HashSet<&str> = self
-            .config
-            .auto_approve_tools
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
 
         // Build the initial context: the user's message plus recent conversation
         let mut context = self.build_llm_context(user_message).await;
@@ -420,7 +426,7 @@ impl Agent {
                     continue;
                 }
 
-                if auto_approve.contains(call.tool.as_str()) {
+                if self.auto_approve.contains(call.tool.as_str()) {
                     // --- Security gate: 2FA for dangerous auto-approved tools ---
                     if self.twofa.requires_2fa(&call.tool) {
                         use crate::security::twofa::TwoFactorVerdict;

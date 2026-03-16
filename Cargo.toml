@@ -1,6 +1,6 @@
 [package]
 name = "safeclaw"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "Sandboxed autonomous AI agent with tool execution, knowledge graph, and multi-interface control"
 
@@ -9,6 +9,8 @@ default = []
 local = ["dep:llama-gguf"]
 local-cuda = ["local", "llama-gguf/cuda"]
 daimon = ["dep:daimon"]
+browser = ["dep:chromiumoxide"]
+discord = ["dep:serenity"]
 
 [dependencies]
 
@@ -59,8 +61,8 @@ rust-embed = { version = "8", features = ["compression"] }
 # Web tools
 htmd = "0.1"
 
-# Browser automation (Chrome DevTools Protocol)
-chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
+# Browser automation (Chrome DevTools Protocol) — optional, enable with --features browser
+chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"], optional = true }
 
 # Archive extraction (skill import)
 flate2 = "1"
@@ -70,8 +72,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # Telegram bot
 teloxide = { version = "0.13", features = ["macros"] }
 
-# Discord bot
-serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend", "cache"] }
+# Discord bot — optional, enable with --features discord
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend", "cache"], optional = true }
 
 # Cron scheduling
 cron = "0.15"
@@ -100,6 +102,7 @@ rlimit = "0.10"
 # Linux-only kernel sandboxing
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
+seccompiler = "0.5"
 
 [dev-dependencies]
 tempfile = "3"

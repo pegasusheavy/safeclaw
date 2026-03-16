@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tokio::process::{Child, Command};
 use tracing::{error, info, warn};
@@ -11,6 +12,10 @@ use crate::error::{Result, SafeAgentError};
 use crate::tunnel::TunnelUrl;
 
 use super::rhai_runtime;
+
+/// Minimum interval between full reconciliation scans. Prevents excessive
+/// filesystem I/O when reconcile() is called every tick and after every message.
+const RECONCILE_COOLDOWN: Duration = Duration::from_secs(30);
 
 /// Manifest describing a skill, read from `skill.toml` in the skill directory.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -107,6 +112,8 @@ pub struct SkillManager {
     /// Skills that were manually stopped via API and should not be
     /// auto-restarted by `reconcile()` until explicitly started again.
     manually_stopped: std::collections::HashSet<String>,
+    /// Last time a full reconciliation ran. Used for TTL cooldown.
+    last_reconcile: Option<Instant>,
 }
 
 impl SkillManager {
@@ -138,6 +145,7 @@ impl SkillManager {
             credentials_path,
             tunnel_url: None,
             manually_stopped: std::collections::HashSet::new(),
+            last_reconcile: None,
         }
     }
 
@@ -204,6 +212,13 @@ impl SkillManager {
     ///
     /// Called every tick from the agent loop.
     pub async fn reconcile(&mut self) -> Result<()> {
+        // TTL cooldown: skip full scan if we ran recently
+        if let Some(last) = self.last_reconcile {
+            if last.elapsed() < RECONCILE_COOLDOWN {
+                return Ok(());
+            }
+        }
+
         // Reap finished processes first
         self.reap_finished().await;
 
@@ -212,8 +227,30 @@ impl SkillManager {
         let mut on_disk: std::collections::HashSet<String> =
             std::collections::HashSet::new();
 
-        // Scan the primary user-managed skills directory
-        self.scan_skill_dir(&self.skills_dir.clone(), &mut on_disk).await;
+        // Scan the primary user-managed skills directory (blocking I/O in spawn_blocking)
+        let skills_dir = self.skills_dir.clone();
+        let discovered = tokio::task::spawn_blocking(move || {
+            scan_dir_blocking(&skills_dir)
+        })
+        .await
+        .map_err(|e| SafeAgentError::Config(format!("reconcile scan panic: {e}")))?
+        .unwrap_or_default();
+
+        for (path, manifest, _) in discovered {
+            on_disk.insert(manifest.name.clone());
+            if !manifest.enabled {
+                if self.running.contains_key(&manifest.name) {
+                    info!(skill = %manifest.name, "stopping disabled skill");
+                    self.stop_skill(&manifest.name).await;
+                }
+                continue;
+            }
+            if !self.running.contains_key(&manifest.name)
+                && !self.manually_stopped.contains(&manifest.name)
+            {
+                self.start_skill(manifest, path).await;
+            }
+        }
 
         // Scan plugin-contributed subprocess skill directories.
         // Each entry is a single skill directory (not a parent of many),
@@ -223,13 +260,12 @@ impl SkillManager {
             if !manifest_path.exists() {
                 continue;
             }
-            let manifest = match self.read_manifest(&manifest_path) {
-                Ok(m) => m,
-                Err(e) => {
-                    warn!(path = %manifest_path.display(), err = %e, "bad plugin skill manifest");
-                    continue;
-                }
-            };
+            let dir_for_spawn = dir.clone();
+            let manifest = tokio::task::spawn_blocking(move || {
+                read_manifest_blocking(&dir_for_spawn.join("skill.toml"))
+            })
+            .await
+            .map_err(|e| SafeAgentError::Config(format!("reconcile manifest read panic: {e}")))??;
             on_disk.insert(manifest.name.clone());
             if !manifest.enabled {
                 if self.running.contains_key(&manifest.name) {
@@ -258,59 +294,8 @@ impl SkillManager {
             self.stop_skill(&name).await;
         }
 
+        self.last_reconcile = Some(Instant::now());
         Ok(())
-    }
-
-    /// Scan a parent directory for skill subdirectories (each containing
-    /// `skill.toml`) and start/stop them as appropriate.
-    async fn scan_skill_dir(
-        &mut self,
-        dir: &Path,
-        on_disk: &mut std::collections::HashSet<String>,
-    ) {
-        let entries = match std::fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(e) => {
-                warn!(dir = %dir.display(), err = %e, "failed to read skills directory");
-                return;
-            }
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-
-            let manifest_path = path.join("skill.toml");
-            if !manifest_path.exists() {
-                continue;
-            }
-
-            let manifest = match self.read_manifest(&manifest_path) {
-                Ok(m) => m,
-                Err(e) => {
-                    warn!(path = %manifest_path.display(), err = %e, "bad skill manifest");
-                    continue;
-                }
-            };
-
-            on_disk.insert(manifest.name.clone());
-
-            if !manifest.enabled {
-                if self.running.contains_key(&manifest.name) {
-                    info!(skill = %manifest.name, "stopping disabled skill");
-                    self.stop_skill(&manifest.name).await;
-                }
-                continue;
-            }
-
-            if !self.running.contains_key(&manifest.name)
-                && !self.manually_stopped.contains(&manifest.name)
-            {
-                self.start_skill(manifest, path).await;
-            }
-        }
     }
 
     /// Start a skill — either as an external process (Python, Node.js, shell)
@@ -906,6 +891,86 @@ impl SkillManager {
         result
     }
 
+    /// Data needed for async list. Clone this, drop the lock, then call list_async.
+    pub fn list_data(&self) -> (
+        PathBuf,
+        HashMap<String, Option<u32>>,
+        HashMap<String, HashMap<String, String>>,
+        std::collections::HashSet<String>,
+    ) {
+        let running_info: HashMap<String, Option<u32>> = self
+            .running
+            .iter()
+            .map(|(name, skill)| {
+                let pid = match &skill.handle {
+                    SkillHandle::Process(c) => c.id(),
+                    _ => None,
+                };
+                (name.clone(), pid)
+            })
+            .collect();
+        (
+            self.skills_dir.clone(),
+            running_info,
+            self.credentials.clone(),
+            self.manually_stopped.clone(),
+        )
+    }
+
+    /// List all skills using spawn_blocking for filesystem I/O. Call after
+    /// cloning data via list_data() so the lock is not held across await.
+    pub async fn list_async(
+        skills_dir: PathBuf,
+        running_info: HashMap<String, Option<u32>>,
+        credentials: HashMap<String, HashMap<String, String>>,
+        manually_stopped: std::collections::HashSet<String>,
+    ) -> Vec<SkillStatus> {
+        let discovered = tokio::task::spawn_blocking(move || scan_dir_blocking(&skills_dir))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+
+        let mut result = Vec::new();
+        for (_path, manifest, has_venv) in discovered {
+            let name = manifest.name.clone();
+            let running = running_info.contains_key(&name);
+            let pid = running_info.get(&name).and_then(|p| *p);
+            let stored = credentials.get(&name).cloned().unwrap_or_default();
+            let credential_status: Vec<CredentialStatus> = manifest
+                .credentials
+                .iter()
+                .map(|spec| {
+                    let configured = stored.contains_key(&spec.name);
+                    CredentialStatus {
+                        name: spec.name.clone(),
+                        label: if spec.label.is_empty() {
+                            spec.name.clone()
+                        } else {
+                            spec.label.clone()
+                        },
+                        description: spec.description.clone(),
+                        required: spec.required,
+                        configured,
+                    }
+                })
+                .collect();
+            let stopped = manually_stopped.contains(&name);
+            result.push(SkillStatus {
+                name,
+                description: manifest.description,
+                skill_type: manifest.skill_type,
+                enabled: manifest.enabled,
+                running,
+                pid,
+                manually_stopped: stopped,
+                has_venv,
+                credentials: credential_status,
+            });
+        }
+        result
+    }
+
     /// Get the directory path for a skill by name, scanning the skills directory.
     fn find_skill_dir(&self, name: &str) -> Option<PathBuf> {
         let entries = std::fs::read_dir(&self.skills_dir).ok()?;
@@ -1420,6 +1485,36 @@ pub struct SkillDetail {
 }
 
 // -- Free helpers --------------------------------------------------------
+
+/// Blocking scan of a skills directory. Returns (path, manifest, has_venv) for each
+/// discovered skill. Used from spawn_blocking to avoid blocking the async runtime.
+fn scan_dir_blocking(dir: &Path) -> Option<Vec<(PathBuf, SkillManifest, bool)>> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut result = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let manifest_path = path.join("skill.toml");
+        if !manifest_path.exists() {
+            continue;
+        }
+        if let Ok(manifest) = read_manifest_blocking(&manifest_path) {
+            let has_venv = path.join(".venv").join("bin").join("python").exists();
+            result.push((path, manifest, has_venv));
+        }
+    }
+    Some(result)
+}
+
+/// Blocking read and parse of a skill manifest. Used from spawn_blocking.
+fn read_manifest_blocking(path: &Path) -> Result<SkillManifest> {
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| SafeAgentError::Config(format!("read skill manifest: {e}")))?;
+    toml::from_str(&contents)
+        .map_err(|e| SafeAgentError::Config(format!("parse skill manifest: {e}")))
+}
 
 /// Sanitise a user-provided skill name to a filesystem-safe directory name.
 fn sanitize_skill_name(name: &str) -> String {

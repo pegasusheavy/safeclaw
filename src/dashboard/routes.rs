@@ -28,6 +28,7 @@ pub struct DashState {
     pub agent: Arc<Agent>,
     pub config: Config,
     pub db: Arc<Mutex<Connection>>,
+    pub db_read: Arc<Mutex<Connection>>,
     /// The password users must provide to access the dashboard.
     pub dashboard_password: String,
     /// Secret bytes used to sign/verify HS256 JWT cookies.
@@ -48,6 +49,7 @@ pub fn build(
     agent: Arc<Agent>,
     config: Config,
     db: Arc<Mutex<Connection>>,
+    db_read: Arc<Mutex<Connection>>,
     messaging: Arc<MessagingManager>,
     trash: Arc<TrashManager>,
     installer: BinaryInstaller,
@@ -126,6 +128,7 @@ pub fn build(
         agent,
         config,
         db,
+        db_read,
         dashboard_password,
         jwt_secret,
         extension_manager: Arc::new(Mutex::new(ext_mgr)),

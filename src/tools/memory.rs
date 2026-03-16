@@ -139,9 +139,12 @@ mod tests {
         std::fs::create_dir_all(&sandbox_dir).unwrap();
         std::fs::create_dir_all(&trash_dir).unwrap();
 
+        let db = db::test_db();
+        let db_read = db.clone();
         ToolContext {
             sandbox: SandboxedFs::new(sandbox_dir).unwrap(),
-            db: db::test_db(),
+            db,
+            db_read,
             http_client: reqwest::Client::new(),
             messaging: Arc::new(MessagingManager::new()),
             trash: Arc::new(TrashManager::new(&trash_dir).unwrap()),

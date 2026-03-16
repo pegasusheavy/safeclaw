@@ -251,18 +251,11 @@ impl Agent {
                 }
 
                 // Execute auto-approved tool calls
-                let auto_approve: std::collections::HashSet<&str> = self
-                    .config
-                    .auto_approve_tools
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect();
-
                 let mut results = Vec::new();
                 let mut all_success = true;
 
                 for call in &parsed.tool_calls {
-                    if auto_approve.contains(call.tool.as_str()) {
+                    if self.auto_approve.contains(call.tool.as_str()) {
                         match super::actions::execute_tool_call(&self.tools, &self.ctx, call).await
                         {
                             Ok(output) => {

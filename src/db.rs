@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use tracing::info;
 
 use crate::error::Result;
@@ -13,6 +13,22 @@ pub fn open(path: &Path) -> Result<Connection> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
 
     migrate(&conn)?;
+    Ok(conn)
+}
+
+/// Open a read-only database connection for SELECT queries.
+/// Uses SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX to reduce mutex contention.
+/// Must be called after the main connection has been opened and migrated.
+pub fn open_readonly(path: &Path) -> Result<Connection> {
+    info!("opening read-only database connection at {}", path.display());
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+
+    conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+    conn.execute_batch("PRAGMA query_only = ON;")?;
+
     Ok(conn)
 }
 

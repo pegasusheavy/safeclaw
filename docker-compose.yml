@@ -1,3 +1,6 @@
+# Docker is optional — safeclaw self-sandboxes via Landlock, seccomp-bpf,
+# and capability dropping on Linux. This compose file is provided for
+# convenience; the binary runs with equivalent isolation natively.
 services:
   safeclaw:
     build:
@@ -7,19 +10,9 @@ services:
     container_name: safeclaw
     restart: unless-stopped
     network_mode: host
-    # Entrypoint runs as root to set up chroot jail, then drops to
-    # the safeclaw user via su-exec.  Set NO_JAIL=1 to bypass.
-    # SYS_ADMIN is required for mount --bind in the chroot jail setup;
-    # it is dropped when the entrypoint exec's into safeclaw via su-exec.
-    cap_add:
-      - SYS_ADMIN
     volumes:
-      # Persistent agent data (SQLite, memory, etc.)
       - ${HOME}/.local/share/safeclaw:/data/safeclaw
-      # Agent config (read-only)
       - ./config.toml:/config/safeclaw/config.toml:ro
-      # Claude CLI profile directory — mounted at a dedicated path and
-      # bind-mounted into the chroot jail by the entrypoint script.
       - ${CLAUDE_CONFIG_DIR:-${HOME}/.claude}:/claude-config
     env_file:
       - .env
