@@ -307,14 +307,21 @@ single `browser` tool (action dispatch pattern).
 
 ## 9. Multi-Agent & Sessions
 
-- [ ] **Session system activation** — the sessions table and tools exist
-      but are disabled by default. Enable and test multi-agent workflows.
-- [ ] **Agent-to-agent delegation** — spawn sub-agents for parallel
-      research, code review, or data processing.
-- [ ] **Specialist personas** — different personality/prompt profiles
-      for different tasks (coding, writing, research, personal assistant).
-- [ ] **Collaborative planning** — agents discuss and refine a plan
-      before executing.
+- [x] **Session system activation** — sessions enabled by default. Tick loop
+      processes pending sessions via `process_pending_sessions()`. Configurable
+      `max_turns` per session. Sessions run with persona-specific LLM prompts
+      and auto-approved tool execution.
+- [x] **Agent-to-agent delegation** — `delegate` tool spawns sub-agent sessions
+      with a specified persona. Supports synchronous (wait for result) and
+      asynchronous (background) delegation. Sessions tracked in `sessions` table.
+- [x] **Specialist personas** — `personas` DB table with CRUD API. Four default
+      personas seeded on first run: coder, researcher, writer, planner. Each has
+      a personality prompt and optional tool restrictions. Dashboard endpoints
+      for managing personas (`/api/personas`).
+- [x] **Collaborative planning** — `plan` tool runs multi-round discussions
+      between specialist personas. Each persona contributes from their expertise
+      across configurable rounds (1-5), then a synthesis step produces a
+      concrete actionable plan with action items, risks, and success criteria.
 
 ---
 

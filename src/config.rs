@@ -752,8 +752,16 @@ impl Default for EmailConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionsConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
+
+    /// Maximum LLM turns per session run (default 10).
+    #[serde(default = "default_session_max_turns")]
+    pub max_turns: usize,
+}
+
+fn default_session_max_turns() -> usize {
+    10
 }
 
 // -- Plugins -------------------------------------------------------------
@@ -1148,7 +1156,8 @@ impl Default for TelegramConfig {
 impl Default for SessionsConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
+            max_turns: default_session_max_turns(),
         }
     }
 }
@@ -1403,7 +1412,8 @@ mod tests {
     #[test]
     fn default_sessions_config() {
         let s = SessionsConfig::default();
-        assert!(!s.enabled);
+        assert!(s.enabled);
+        assert_eq!(s.max_turns, 10);
     }
 
     #[test]

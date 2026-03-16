@@ -484,6 +484,18 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
         ",
     )?;
 
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS personas (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            personality TEXT NOT NULL,
+            tools       TEXT NOT NULL DEFAULT '',
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        ",
+    )?;
+
     info!("database migrations complete");
     Ok(())
 }
@@ -559,6 +571,7 @@ mod tests {
             "user_profiles",
             "memory_embeddings",
             "api_tokens",
+            "personas",
         ];
 
         for table in tables {

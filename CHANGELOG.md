@@ -5,6 +5,34 @@ All notable changes to SafeClaw are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-03-04
+
+### Added
+
+- **Session system activation**: Sessions now enabled by default. The tick
+  loop processes pending sessions via `process_pending_sessions()`, running
+  each through the LLM with persona-specific prompts and auto-approved tool
+  execution. Configurable `max_turns` per session (default 10).
+- **Specialist personas**: New `personas` database table with CRUD REST API
+  (`GET/POST /api/personas`, `PUT/DELETE /api/personas/{id}`). Four default
+  personas seeded on first run: coder, researcher, writer, planner. Each
+  persona has a personality prompt and optional tool restrictions.
+- **`delegate` tool**: Allows the agent to spawn sub-agent sessions with a
+  specified persona. Supports synchronous mode (waits for result) and
+  asynchronous mode (background processing). Sub-agents run in isolated
+  sessions with their own conversation history.
+- **`plan` tool**: Multi-persona collaborative planning. Multiple specialist
+  personas discuss an objective across configurable rounds (1-5), each
+  contributing from their area of expertise. A final synthesis step produces
+  an actionable plan with executive summary, action items, risks, and
+  success criteria.
+
+### Changed
+
+- `SessionsConfig.enabled` now defaults to `true` (was `false`).
+- `SessionsConfig` gains a `max_turns` field (default 10) controlling the
+  maximum LLM turns per session run.
+
 ## [0.6.0] — 2026-03-04
 
 ### Added
