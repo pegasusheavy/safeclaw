@@ -5,6 +5,49 @@ All notable changes to SafeClaw are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-03-04
+
+### Added
+
+- **Skill versioning** — `version` field in `skill.toml`. Create snapshots
+  via `POST /api/skills/{name}/snapshot`, list with
+  `GET /api/skills/{name}/versions`, and rollback with
+  `POST /api/skills/{name}/rollback`. Snapshots are stored under
+  `<skill_dir>/.versions/<version>/`, preserving source files while
+  excluding `.venv`, `data`, `node_modules`, and logs.
+
+- **Skill dependency management** — `dependencies` array in `skill.toml`
+  listing names of other skills that must be running first. Reconciliation
+  uses two-pass dependency ordering: skills with unmet deps are deferred
+  until their dependencies start.
+
+- **Per-skill sandboxing** — `[sandbox]` section in `skill.toml` with
+  `restrict_fs` (restricts HOME/cwd to the skill directory), `block_network`,
+  `max_memory_mib` (default 1024), `max_file_size_mib` (default 128), and
+  `max_open_files` (default 128). Replaces the one-size-fits-all
+  `ProcessLimits::skill()` with per-skill resource limits applied via
+  rlimit in pre_exec.
+
+- **Skill health monitoring** — `SkillHealth` struct with `uptime_secs`,
+  `restart_count`, `last_error`, and `memory_bytes` (read from
+  `/proc/{pid}/statm` on Linux). Health data is included in both the
+  `GET /api/skills` list and `GET /api/skills/{name}/detail` responses.
+  Restart counts and last errors persist across skill restart cycles.
+
+- **Hot reload** — `hot_reload()` runs during every reconciliation cycle,
+  hashing `skill.toml`, the entrypoint file, and `requirements.txt`. When
+  hashes differ from the previous check, the skill is stopped and restarted
+  automatically without requiring a full agent restart.
+
+### Changed
+
+- `SkillManifest` now includes `version`, `dependencies`, and `sandbox`
+  fields (all backward-compatible with defaults).
+- `SkillStatus` now includes `version`, `dependencies`, and `health`.
+- `RunningSkill` tracks `started_at`, `restart_count`, and `last_error`.
+- `SkillManager` tracks cumulative `restart_counts`, `last_errors`, and
+  `file_hashes` for hot-reload detection.
+
 ## [0.7.0] — 2026-03-04
 
 ### Added

@@ -634,12 +634,12 @@ pub async fn list_tools(
 pub async fn list_skills(
     State(state): State<DashState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let (skills_dir, running_info, credentials, manually_stopped) = {
+    let (skills_dir, running_info, credentials, manually_stopped, health_map) = {
         let sm = state.agent.skill_manager.lock().await;
         sm.list_data()
     };
     let skills =
-        SkillManager::list_async(skills_dir, running_info, credentials, manually_stopped).await;
+        SkillManager::list_async(skills_dir, running_info, credentials, manually_stopped, health_map).await;
     Ok(Json(serde_json::to_value(skills).unwrap()))
 }
 
@@ -715,6 +715,55 @@ pub async fn restart_skill(
     Ok(Json(ActionResponse {
         ok: true,
         message: Some(format!("skill '{}' restarted", skill_name)),
+        count: None,
+    }))
+}
+
+/// List version snapshots for a skill.
+pub async fn list_skill_versions(
+    State(state): State<DashState>,
+    Path(skill_name): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let sm = state.agent.skill_manager.lock().await;
+    let versions = sm.list_versions(&skill_name).map_err(|e| {
+        error!("list versions: {e}");
+        StatusCode::NOT_FOUND
+    })?;
+    Ok(Json(serde_json::json!({ "versions": versions })))
+}
+
+/// Create a version snapshot of the current skill state.
+pub async fn snapshot_skill_version(
+    State(state): State<DashState>,
+    Path(skill_name): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let sm = state.agent.skill_manager.lock().await;
+    let version = sm.snapshot_version(&skill_name).map_err(|e| {
+        error!("snapshot version: {e}");
+        StatusCode::NOT_FOUND
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true, "version": version })))
+}
+
+#[derive(Deserialize)]
+pub struct RollbackBody {
+    pub version: String,
+}
+
+/// Rollback a skill to a previous version snapshot.
+pub async fn rollback_skill_version(
+    State(state): State<DashState>,
+    Path(skill_name): Path<String>,
+    Json(body): Json<RollbackBody>,
+) -> Result<Json<ActionResponse>, StatusCode> {
+    let mut sm = state.agent.skill_manager.lock().await;
+    sm.rollback_version(&skill_name, &body.version).await.map_err(|e| {
+        error!("rollback: {e}");
+        StatusCode::NOT_FOUND
+    })?;
+    Ok(Json(ActionResponse {
+        ok: true,
+        message: Some(format!("skill '{}' rolled back to {}", skill_name, body.version)),
         count: None,
     }))
 }
