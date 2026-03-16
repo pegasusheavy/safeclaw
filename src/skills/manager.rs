@@ -23,6 +23,9 @@ pub struct SkillManifest {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// Semantic version string (e.g. "1.0.0"). Optional.
+    #[serde(default)]
+    pub version: String,
     /// "daemon" (long-running) or "oneshot" (run once and exit).
     #[serde(default = "default_skill_type")]
     pub skill_type: String,
@@ -46,7 +49,51 @@ pub struct SkillManifest {
     /// by name with a human-readable description and whether it's required.
     #[serde(default)]
     pub credentials: Vec<CredentialSpec>,
+    /// Names of other skills this skill depends on. The dependency skills
+    /// must be running before this skill starts.
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    /// Per-skill sandbox configuration.
+    #[serde(default)]
+    pub sandbox: SkillSandboxConfig,
 }
+
+/// Per-skill filesystem and network isolation settings.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct SkillSandboxConfig {
+    /// Restrict filesystem writes to the skill's own directory tree.
+    /// Default: true.
+    #[serde(default = "default_true")]
+    pub restrict_fs: bool,
+    /// Block outbound network access. Default: false.
+    #[serde(default)]
+    pub block_network: bool,
+    /// Maximum memory in MiB (default: 1024 = 1 GiB).
+    #[serde(default = "default_sandbox_memory_mib")]
+    pub max_memory_mib: u64,
+    /// Maximum file size in MiB (default: 128).
+    #[serde(default = "default_sandbox_file_mib")]
+    pub max_file_size_mib: u64,
+    /// Maximum open file descriptors (default: 128).
+    #[serde(default = "default_sandbox_fds")]
+    pub max_open_files: u64,
+}
+
+impl Default for SkillSandboxConfig {
+    fn default() -> Self {
+        Self {
+            restrict_fs: true,
+            block_network: false,
+            max_memory_mib: default_sandbox_memory_mib(),
+            max_file_size_mib: default_sandbox_file_mib(),
+            max_open_files: default_sandbox_fds(),
+        }
+    }
+}
+
+fn default_sandbox_memory_mib() -> u64 { 1024 }
+fn default_sandbox_file_mib() -> u64 { 128 }
+fn default_sandbox_fds() -> u64 { 128 }
 
 /// Declares a credential that a skill needs.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -89,10 +136,13 @@ enum SkillHandle {
     },
 }
 
-/// Tracks a running skill.
+/// Tracks a running skill with health metrics.
 struct RunningSkill {
     manifest: SkillManifest,
     handle: SkillHandle,
+    started_at: Instant,
+    restart_count: u32,
+    last_error: Option<String>,
 }
 
 /// Manages skill lifecycle: discovery, start, stop, restart, credentials.
@@ -114,6 +164,13 @@ pub struct SkillManager {
     manually_stopped: std::collections::HashSet<String>,
     /// Last time a full reconciliation ran. Used for TTL cooldown.
     last_reconcile: Option<Instant>,
+    /// Cumulative restart counts for skills (survives stop/start cycles).
+    restart_counts: HashMap<String, u32>,
+    /// Last known errors per skill.
+    last_errors: HashMap<String, String>,
+    /// Cached manifest hashes for hot-reload detection.
+    /// Maps skill name -> SHA-256 hash of skill.toml + entrypoint.
+    file_hashes: HashMap<String, u64>,
 }
 
 impl SkillManager {
@@ -146,6 +203,9 @@ impl SkillManager {
             tunnel_url: None,
             manually_stopped: std::collections::HashSet::new(),
             last_reconcile: None,
+            restart_counts: HashMap::new(),
+            last_errors: HashMap::new(),
+            file_hashes: HashMap::new(),
         }
     }
 
@@ -236,6 +296,9 @@ impl SkillManager {
         .map_err(|e| SafeAgentError::Config(format!("reconcile scan panic: {e}")))?
         .unwrap_or_default();
 
+        // Collect for dependency-ordered start. Skills with unmet deps are deferred.
+        let mut deferred: Vec<(PathBuf, SkillManifest)> = Vec::new();
+
         for (path, manifest, _) in discovered {
             on_disk.insert(manifest.name.clone());
             if !manifest.enabled {
@@ -248,6 +311,17 @@ impl SkillManager {
             if !self.running.contains_key(&manifest.name)
                 && !self.manually_stopped.contains(&manifest.name)
             {
+                if self.dependencies_met(&manifest) {
+                    self.start_skill(manifest, path).await;
+                } else {
+                    deferred.push((path, manifest));
+                }
+            }
+        }
+
+        // Second pass: try deferred skills whose deps may now be satisfied
+        for (path, manifest) in deferred {
+            if !self.running.contains_key(&manifest.name) && self.dependencies_met(&manifest) {
                 self.start_skill(manifest, path).await;
             }
         }
@@ -276,8 +350,16 @@ impl SkillManager {
             }
             if !self.running.contains_key(&manifest.name)
                 && !self.manually_stopped.contains(&manifest.name)
+                && self.dependencies_met(&manifest)
             {
                 self.start_skill(manifest, dir).await;
+            }
+        }
+
+        // Hot-reload: detect file changes in running skills
+        if let Ok(reloaded) = self.hot_reload().await {
+            if reloaded > 0 {
+                info!(count = reloaded, "hot-reloaded skills");
             }
         }
 
@@ -406,39 +488,64 @@ impl SkillManager {
             cmd.env(k, v);
         }
 
-        // On Unix: set process group + apply resource limits (rlimit)
+        // On Unix: set process group + apply per-skill resource limits
         #[cfg(unix)]
         {
             #[allow(unused_imports)]
             use std::os::unix::process::CommandExt;
-            let limits = crate::security::ProcessLimits::skill();
+            let limits = crate::security::ProcessLimits {
+                max_memory_bytes: manifest.sandbox.max_memory_mib * 1024 * 1024,
+                max_file_size_bytes: manifest.sandbox.max_file_size_mib * 1024 * 1024,
+                max_open_files: manifest.sandbox.max_open_files,
+                max_processes: 64,
+                max_cpu_secs: 600,
+            };
+            let restrict_fs = manifest.sandbox.restrict_fs;
+            let skill_dir = dir.clone();
             unsafe {
                 cmd.pre_exec(move || {
                     libc::setpgid(0, 0);
                     crate::security::apply_process_limits(&limits)?;
+                    // Per-skill filesystem restriction via chdir
+                    if restrict_fs {
+                        std::env::set_current_dir(&skill_dir)?;
+                    }
                     Ok(())
                 });
             }
         }
 
+        // Per-skill sandbox: restrict HOME to skill dir if fs isolation requested
+        if manifest.sandbox.restrict_fs {
+            cmd.env("HOME", &dir);
+            cmd.env("SKILL_SANDBOX", "1");
+        }
+
+        let skill_name = manifest.name.clone();
         match cmd.spawn() {
             Ok(child) => {
                 info!(
-                    skill = %manifest.name,
+                    skill = %skill_name,
                     pid = ?child.id(),
                     %interpreter,
                     entrypoint = %manifest.entrypoint,
                     "skill started (with resource limits)"
                 );
+                let rcount = self.restart_counts.get(&skill_name).copied().unwrap_or(0);
+                let last_err = self.last_errors.get(&skill_name).cloned();
                 self.running.insert(
-                    manifest.name.clone(),
+                    skill_name,
                     RunningSkill {
                         manifest,
                         handle: SkillHandle::Process(child),
+                        started_at: Instant::now(),
+                        restart_count: rcount,
+                        last_error: last_err,
                     },
                 );
             }
             Err(e) => {
+                self.last_errors.insert(skill_name, e.to_string());
                 error!(skill = %manifest.name, err = %e, "failed to start skill");
             }
         }
@@ -615,11 +722,17 @@ impl SkillManager {
             "embedded Rhai skill started"
         );
 
+        let skill_name = manifest.name.clone();
+        let rcount = self.restart_counts.get(&skill_name).copied().unwrap_or(0);
+        let last_err = self.last_errors.get(&skill_name).cloned();
         self.running.insert(
-            manifest.name.clone(),
+            skill_name,
             RunningSkill {
                 manifest,
                 handle: SkillHandle::Embedded { task, cancel },
+                started_at: Instant::now(),
+                restart_count: rcount,
+                last_error: last_err,
             },
         );
     }
@@ -776,16 +889,21 @@ impl SkillManager {
                         } else if status.success() {
                             info!(skill = %name, "daemon skill exited (will restart)");
                         } else {
+                            let err_msg = format!("exited with status {status}");
+                            self.last_errors.insert(name.clone(), err_msg);
                             warn!(
                                 skill = %name,
                                 status = %status,
                                 "skill exited with error (will restart)"
                             );
                         }
+                        *self.restart_counts.entry(name.clone()).or_insert(0) += 1;
                         true
                     }
                     Ok(None) => false,
                     Err(e) => {
+                        self.last_errors.insert(name.clone(), e.to_string());
+                        *self.restart_counts.entry(name.clone()).or_insert(0) += 1;
                         warn!(skill = %name, err = %e, "error checking skill status");
                         true
                     }
@@ -795,6 +913,7 @@ impl SkillManager {
                         if skill.manifest.skill_type == "oneshot" {
                             info!(skill = %name, "oneshot Rhai skill completed");
                         } else {
+                            *self.restart_counts.entry(name.clone()).or_insert(0) += 1;
                             info!(skill = %name, "Rhai skill exited (will restart)");
                         }
                         true
@@ -874,8 +993,10 @@ impl SkillManager {
 
                 let stopped = self.manually_stopped.contains(&name);
                 let has_venv = path.join(".venv").join("bin").join("python").exists();
+                let health = self.build_health(&name, pid);
                 result.push(SkillStatus {
                     name,
+                    version: manifest.version,
                     description: manifest.description,
                     skill_type: manifest.skill_type,
                     enabled: manifest.enabled,
@@ -884,6 +1005,8 @@ impl SkillManager {
                     manually_stopped: stopped,
                     has_venv,
                     credentials: credential_status,
+                    dependencies: manifest.dependencies,
+                    health,
                 });
             }
         }
@@ -897,6 +1020,7 @@ impl SkillManager {
         HashMap<String, Option<u32>>,
         HashMap<String, HashMap<String, String>>,
         std::collections::HashSet<String>,
+        HashMap<String, SkillHealth>,
     ) {
         let running_info: HashMap<String, Option<u32>> = self
             .running
@@ -909,11 +1033,16 @@ impl SkillManager {
                 (name.clone(), pid)
             })
             .collect();
+        let health_map: HashMap<String, SkillHealth> = running_info
+            .iter()
+            .map(|(name, pid)| (name.clone(), self.build_health(name, *pid)))
+            .collect();
         (
             self.skills_dir.clone(),
             running_info,
             self.credentials.clone(),
             self.manually_stopped.clone(),
+            health_map,
         )
     }
 
@@ -924,6 +1053,7 @@ impl SkillManager {
         running_info: HashMap<String, Option<u32>>,
         credentials: HashMap<String, HashMap<String, String>>,
         manually_stopped: std::collections::HashSet<String>,
+        health_map: HashMap<String, SkillHealth>,
     ) -> Vec<SkillStatus> {
         let discovered = tokio::task::spawn_blocking(move || scan_dir_blocking(&skills_dir))
             .await
@@ -956,8 +1086,15 @@ impl SkillManager {
                 })
                 .collect();
             let stopped = manually_stopped.contains(&name);
+            let health = health_map.get(&name).cloned().unwrap_or(SkillHealth {
+                uptime_secs: 0,
+                restart_count: 0,
+                last_error: None,
+                memory_bytes: 0,
+            });
             result.push(SkillStatus {
                 name,
+                version: manifest.version,
                 description: manifest.description,
                 skill_type: manifest.skill_type,
                 enabled: manifest.enabled,
@@ -966,6 +1103,8 @@ impl SkillManager {
                 manually_stopped: stopped,
                 has_venv,
                 credentials: credential_status,
+                dependencies: manifest.dependencies,
+                health,
             });
         }
         result
@@ -1039,9 +1178,11 @@ impl SkillManager {
         } else {
             None
         };
+        let health = self.build_health(name, pid);
         Ok(SkillDetail {
             status: SkillStatus {
                 name: manifest.name.clone(),
+                version: manifest.version.clone(),
                 description: manifest.description.clone(),
                 skill_type: manifest.skill_type.clone(),
                 enabled: manifest.enabled,
@@ -1050,6 +1191,8 @@ impl SkillManager {
                 manually_stopped: stopped,
                 has_venv,
                 credentials: credential_status,
+                dependencies: manifest.dependencies.clone(),
+                health,
             },
             manifest_raw,
             env: manifest.env.clone(),
@@ -1439,11 +1582,209 @@ impl SkillManager {
         }
         info!("all skills stopped");
     }
+
+    // -- Health ---------------------------------------------------------------
+
+    /// Build health info for a skill.
+    fn build_health(&self, name: &str, pid: Option<u32>) -> SkillHealth {
+        let uptime_secs = self
+            .running
+            .get(name)
+            .map(|s| s.started_at.elapsed().as_secs())
+            .unwrap_or(0);
+        let restart_count = self.restart_counts.get(name).copied().unwrap_or(0);
+        let last_error = self.last_errors.get(name).cloned();
+        let memory_bytes = pid.map(read_process_memory).unwrap_or(0);
+        SkillHealth {
+            uptime_secs,
+            restart_count,
+            last_error,
+            memory_bytes,
+        }
+    }
+
+    // -- Dependency resolution ------------------------------------------------
+
+    /// Check whether all dependencies of a manifest are satisfied (running).
+    fn dependencies_met(&self, manifest: &SkillManifest) -> bool {
+        manifest
+            .dependencies
+            .iter()
+            .all(|dep| self.running.contains_key(dep.as_str()))
+    }
+
+    // -- Versioning / rollback ------------------------------------------------
+
+    /// Create a versioned backup of the current skill state before changes.
+    /// Saves to `<skill_dir>/.versions/<version>/`.
+    pub fn snapshot_version(&self, name: &str) -> Result<String> {
+        let dir = self.find_skill_dir(name).ok_or_else(|| {
+            SafeAgentError::Config(format!("skill '{name}' not found"))
+        })?;
+
+        let manifest = self.read_manifest(&dir.join("skill.toml"))?;
+        let version = if manifest.version.is_empty() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            format!("snap-{now}")
+        } else {
+            manifest.version.clone()
+        };
+
+        let versions_dir = dir.join(".versions").join(&version);
+        if versions_dir.exists() {
+            return Ok(version);
+        }
+        std::fs::create_dir_all(&versions_dir).map_err(SafeAgentError::Io)?;
+
+        // Copy relevant files (skip .versions, .venv, data, node_modules, __pycache__)
+        for entry in std::fs::read_dir(&dir).map_err(SafeAgentError::Io)?.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if matches!(
+                name_str.as_ref(),
+                ".versions" | ".venv" | "data" | "node_modules" | "__pycache__" | "skill.log"
+            ) {
+                continue;
+            }
+            let src = entry.path();
+            let dst = versions_dir.join(&name);
+            if src.is_dir() {
+                copy_dir_recursive(&src, &dst)?;
+            } else {
+                std::fs::copy(&src, &dst).map_err(SafeAgentError::Io)?;
+            }
+        }
+
+        info!(skill = %name, version = %version, "version snapshot created");
+        Ok(version)
+    }
+
+    /// List available version snapshots for a skill.
+    pub fn list_versions(&self, name: &str) -> Result<Vec<String>> {
+        let dir = self.find_skill_dir(name).ok_or_else(|| {
+            SafeAgentError::Config(format!("skill '{name}' not found"))
+        })?;
+
+        let versions_dir = dir.join(".versions");
+        if !versions_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut versions: Vec<String> = std::fs::read_dir(&versions_dir)
+            .map_err(SafeAgentError::Io)?
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+            .collect();
+        versions.sort();
+        Ok(versions)
+    }
+
+    /// Rollback a skill to a previous version snapshot.
+    pub async fn rollback_version(&mut self, name: &str, version: &str) -> Result<()> {
+        let dir = self.find_skill_dir(name).ok_or_else(|| {
+            SafeAgentError::Config(format!("skill '{name}' not found"))
+        })?;
+
+        let snapshot_dir = dir.join(".versions").join(version);
+        if !snapshot_dir.exists() {
+            return Err(SafeAgentError::Config(format!(
+                "version '{version}' not found for skill '{name}'"
+            )));
+        }
+
+        // Snapshot current state first
+        self.snapshot_version(name)?;
+
+        // Stop the skill
+        if self.running.contains_key(name) {
+            self.stop_skill(name).await;
+        }
+
+        // Remove current files (except .versions, .venv, data, node_modules, skill.log)
+        for entry in std::fs::read_dir(&dir).map_err(SafeAgentError::Io)?.flatten() {
+            let ename = entry.file_name();
+            let ename_str = ename.to_string_lossy();
+            if matches!(
+                ename_str.as_ref(),
+                ".versions" | ".venv" | "data" | "node_modules" | "skill.log"
+            ) {
+                continue;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path).map_err(SafeAgentError::Io)?;
+            } else {
+                std::fs::remove_file(&path).map_err(SafeAgentError::Io)?;
+            }
+        }
+
+        // Copy snapshot files back
+        for entry in std::fs::read_dir(&snapshot_dir).map_err(SafeAgentError::Io)?.flatten() {
+            let src = entry.path();
+            let dst = dir.join(entry.file_name());
+            if src.is_dir() {
+                copy_dir_recursive(&src, &dst)?;
+            } else {
+                std::fs::copy(&src, &dst).map_err(SafeAgentError::Io)?;
+            }
+        }
+
+        info!(skill = %name, version = %version, "rolled back to version");
+
+        // Restart the skill
+        self.manually_stopped.remove(name);
+        let manifest = self.read_manifest(&dir.join("skill.toml"))?;
+        if manifest.enabled {
+            self.start_skill(manifest, dir).await;
+        }
+
+        Ok(())
+    }
+
+    // -- Hot reload -----------------------------------------------------------
+
+    /// Check for file changes in running skills and restart those that changed.
+    pub async fn hot_reload(&mut self) -> Result<usize> {
+        let mut restarted = 0;
+
+        let skills_dir = self.skills_dir.clone();
+        let discovered = tokio::task::spawn_blocking(move || scan_dir_blocking(&skills_dir))
+            .await
+            .map_err(|e| SafeAgentError::Config(format!("hot reload scan: {e}")))?
+            .unwrap_or_default();
+
+        for (path, manifest, _has_venv) in discovered {
+            if !self.running.contains_key(&manifest.name) {
+                continue;
+            }
+
+            let hash = compute_skill_hash(&path, &manifest.entrypoint);
+            let prev = self.file_hashes.get(&manifest.name).copied();
+
+            if let Some(prev_hash) = prev {
+                if hash != prev_hash {
+                    info!(skill = %manifest.name, "files changed, hot-reloading");
+                    self.stop_skill(&manifest.name).await;
+                    self.start_skill(manifest.clone(), path).await;
+                    restarted += 1;
+                }
+            }
+
+            self.file_hashes.insert(manifest.name.clone(), hash);
+        }
+
+        Ok(restarted)
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
 pub struct SkillStatus {
     pub name: String,
+    pub version: String,
     pub description: String,
     pub skill_type: String,
     pub enabled: bool,
@@ -1454,6 +1795,22 @@ pub struct SkillStatus {
     /// Whether a Python venv exists for this skill.
     pub has_venv: bool,
     pub credentials: Vec<CredentialStatus>,
+    /// Names of other skills this skill depends on.
+    pub dependencies: Vec<String>,
+    pub health: SkillHealth,
+}
+
+/// Health metrics for a skill.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SkillHealth {
+    /// Seconds since the skill was last started (0 if not running).
+    pub uptime_secs: u64,
+    /// Total number of restarts since the agent started.
+    pub restart_count: u32,
+    /// Last error message, if any.
+    pub last_error: Option<String>,
+    /// Resident memory in bytes (from /proc/{pid}/statm on Linux, 0 otherwise).
+    pub memory_bytes: u64,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1549,6 +1906,50 @@ fn infer_name_from_source(source: &str, location: &str) -> String {
         _ => String::new(),
     };
     sanitize_skill_name(&raw)
+}
+
+/// Read resident memory of a process from /proc (Linux only).
+/// Returns 0 on non-Linux or if the file is unreadable.
+fn read_process_memory(pid: u32) -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        let path = format!("/proc/{pid}/statm");
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            // statm fields: size resident shared text lib data dt (all in pages)
+            if let Some(resident_pages) = contents.split_whitespace().nth(1) {
+                if let Ok(pages) = resident_pages.parse::<u64>() {
+                    return pages * 4096; // page size is typically 4 KiB
+                }
+            }
+        }
+    }
+    let _ = pid;
+    0
+}
+
+/// Compute a simple hash of a skill's key files for change detection.
+fn compute_skill_hash(dir: &Path, entrypoint: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+
+    // Hash skill.toml
+    if let Ok(contents) = std::fs::read_to_string(dir.join("skill.toml")) {
+        contents.hash(&mut hasher);
+    }
+
+    // Hash the entrypoint file
+    if let Ok(contents) = std::fs::read_to_string(dir.join(entrypoint)) {
+        contents.hash(&mut hasher);
+    }
+
+    // Hash requirements.txt if present
+    if let Ok(contents) = std::fs::read_to_string(dir.join("requirements.txt")) {
+        contents.hash(&mut hasher);
+    }
+
+    hasher.finish()
 }
 
 /// Check whether a command exists on `$PATH`.

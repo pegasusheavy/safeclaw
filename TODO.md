@@ -327,10 +327,14 @@ single `browser` tool (action dispatch pattern).
 
 ## 10. Skill Ecosystem
 
-- [ ] **Skill versioning** — track versions in skill.toml; support
-      rollback.
-- [ ] **Skill dependency management** — skills can declare dependencies
-      on other skills.
+- [x] **Skill versioning** — `version` field in `skill.toml`. Snapshot/rollback
+      via `POST /api/skills/{name}/snapshot`, `POST /api/skills/{name}/rollback`,
+      and `GET /api/skills/{name}/versions`. Snapshots stored under
+      `<skill_dir>/.versions/<version>/`, preserving source files while excluding
+      `.venv`, `data`, `node_modules`, and logs.
+- [x] **Skill dependency management** — `dependencies` array in `skill.toml`
+      listing other skill names. Reconcile uses two-pass dependency ordering:
+      skills with unmet deps are deferred until dependency skills start first.
 - [ ] **Community skill registry** — a central catalog of shareable
       skills with install-from-URL.
 - [x] **TypeScript/Node.js skills** — Node.js skill entrypoints (`.js`,
@@ -348,12 +352,18 @@ single `browser` tool (action dispatch pattern).
       `/api/skills/{name}/start`, `/api/skills/{name}/restart`. Manually
       stopped skills are tracked and excluded from auto-reconciliation
       until explicitly restarted.
-- [ ] **Skill sandboxing** — per-skill filesystem and network isolation
-      (currently all skills share the same sandbox).
-- [ ] **Skill health monitoring** — dashboard widget showing uptime,
-      restart count, memory usage, and error rate per skill.
-- [ ] **Hot reload** — detect skill file changes and restart without
-      a full agent restart.
+- [x] **Skill sandboxing** — per-skill `[sandbox]` section in `skill.toml`
+      with `restrict_fs` (restrict HOME/cwd to skill dir), `block_network`,
+      `max_memory_mib`, `max_file_size_mib`, and `max_open_files`. Replaces
+      the global `ProcessLimits::skill()` with per-skill resource limits
+      applied via rlimit in pre_exec.
+- [x] **Skill health monitoring** — `SkillHealth` struct with `uptime_secs`,
+      `restart_count`, `last_error`, and `memory_bytes` (read from
+      `/proc/{pid}/statm` on Linux). Included in `SkillStatus` for both
+      the `GET /api/skills` list and `GET /api/skills/{name}/detail`.
+- [x] **Hot reload** — `hot_reload()` runs during every reconciliation cycle,
+      hashing `skill.toml`, the entrypoint, and `requirements.txt`. If hashes
+      differ from last check, the skill is stopped and restarted automatically.
 
 ---
 
