@@ -1,6 +1,6 @@
 [package]
 name = "safeclaw"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Sandboxed autonomous AI agent with tool execution, knowledge graph, and multi-interface control"
 
@@ -93,6 +93,8 @@ rand = "0.10.0"
 webauthn-rs = { version = "0.5.4", features = ["danger-allow-state-serialisation"] }
 aes-gcm = "0.10.3"
 sha2 = "0.10.9"
+base64 = "0.22"
+urlencoding = "2"
 
 # Unix process group management & sandboxing
 [target.'cfg(unix)'.dependencies]

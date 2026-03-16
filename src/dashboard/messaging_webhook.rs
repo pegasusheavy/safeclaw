@@ -468,3 +468,20 @@ pub async fn twilio_incoming(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/messaging/slack/events — Slack Events API
+// ---------------------------------------------------------------------------
+
+pub async fn slack_events(
+    State(state): State<DashState>,
+    Json(payload): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let result = crate::messaging::slack::handle_slack_event(
+        payload,
+        &state.config.slack,
+        state.agent.clone(),
+    )
+    .await;
+    (StatusCode::OK, Json(result))
+}

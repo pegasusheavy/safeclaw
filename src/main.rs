@@ -332,6 +332,86 @@ async fn main() {
         info!("Signal bridge backend registered");
     }
 
+    // Register Slack bot backend (if enabled)
+    if config.slack.enabled {
+        match std::env::var("SLACK_BOT_TOKEN") {
+            Ok(token) => {
+                let backend = Arc::new(messaging::slack::SlackBackend::new(token));
+                let primary_channel = config
+                    .slack
+                    .allowed_channel_ids
+                    .first()
+                    .cloned()
+                    .unwrap_or_default();
+                msg_manager.register(backend, primary_channel);
+                info!("Slack bot backend registered");
+            }
+            Err(_) => {
+                error!("SLACK_BOT_TOKEN not set but slack.enabled = true");
+            }
+        }
+    }
+
+    // Register Matrix backend (if enabled)
+    let matrix_backend: Option<Arc<messaging::matrix::MatrixBackend>> = if config.matrix.enabled {
+        match std::env::var("MATRIX_ACCESS_TOKEN") {
+            Ok(token) => {
+                let backend = Arc::new(messaging::matrix::MatrixBackend::new(
+                    config.matrix.homeserver.clone(),
+                    token,
+                ));
+                let primary_channel = config
+                    .matrix
+                    .allowed_room_ids
+                    .first()
+                    .cloned()
+                    .unwrap_or_default();
+                msg_manager.register(backend.clone(), primary_channel);
+                info!("Matrix backend registered");
+                Some(backend)
+            }
+            Err(_) => {
+                // Try login with username/password
+                if let (Ok(user), Ok(pass)) = (
+                    std::env::var("MATRIX_USER"),
+                    std::env::var("MATRIX_PASSWORD"),
+                ) {
+                    match messaging::matrix::MatrixBackend::login(
+                        &config.matrix.homeserver,
+                        &user,
+                        &pass,
+                    )
+                    .await
+                    {
+                        Ok((backend, _token)) => {
+                            let backend = Arc::new(backend);
+                            let primary_channel = config
+                                .matrix
+                                .allowed_room_ids
+                                .first()
+                                .cloned()
+                                .unwrap_or_default();
+                            msg_manager.register(backend.clone(), primary_channel);
+                            info!("Matrix backend registered (password login)");
+                            Some(backend)
+                        }
+                        Err(e) => {
+                            error!("Matrix login failed: {e}");
+                            None
+                        }
+                    }
+                } else {
+                    error!(
+                        "Matrix enabled but no MATRIX_ACCESS_TOKEN or MATRIX_USER/MATRIX_PASSWORD set"
+                    );
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
     let messaging = Arc::new(msg_manager);
 
     // Initialize PII encryption key (generated on first launch)
@@ -393,6 +473,19 @@ async fn main() {
 
     // Start Discord gateway (if enabled)
     let _discord_shutdown = maybe_start_discord(&config, &agent).await;
+
+    // Start Matrix sync polling (if enabled)
+    let _matrix_shutdown = if let Some(ref mb) = matrix_backend {
+        let tx = messaging::matrix::start_sync(
+            mb.clone(),
+            config.matrix.clone(),
+            agent.clone(),
+        );
+        info!("Matrix sync polling started");
+        Some(tx)
+    } else {
+        None
+    };
 
     // Start WhatsApp bridge (if enabled)
     if let Some(ref wa_backend) = whatsapp_backend {
@@ -585,6 +678,10 @@ fn build_tool_registry(config: &Config, _data_dir: &std::path::Path) -> ToolRegi
 
     if config.tools.message.enabled {
         registry.register(Box::new(message::MessageTool::new()));
+    }
+
+    if config.email.enabled {
+        registry.register(Box::new(email::EmailTool::new()));
     }
 
     if config.sessions.enabled {

@@ -73,6 +73,15 @@ pub struct Config {
     pub signal: SignalConfig,
 
     #[serde(default)]
+    pub slack: SlackConfig,
+
+    #[serde(default)]
+    pub matrix: MatrixConfig,
+
+    #[serde(default)]
+    pub email: EmailConfig,
+
+    #[serde(default)]
     pub sessions: SessionsConfig,
 
     #[serde(default)]
@@ -666,6 +675,79 @@ impl Default for SignalConfig {
     }
 }
 
+// -- Slack ---------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SlackConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Allowed Slack channel IDs. Empty = allow all.
+    #[serde(default)]
+    pub allowed_channel_ids: Vec<String>,
+}
+
+impl Default for SlackConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            allowed_channel_ids: Vec::new(),
+        }
+    }
+}
+
+// -- Matrix --------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MatrixConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Matrix homeserver URL (e.g. "https://matrix.org").
+    #[serde(default)]
+    pub homeserver: String,
+
+    /// Matrix user ID (e.g. "@bot:matrix.org"). Used to filter own messages.
+    #[serde(default)]
+    pub user_id: Option<String>,
+
+    /// Allowed room IDs. Empty = allow all joined rooms.
+    #[serde(default)]
+    pub allowed_room_ids: Vec<String>,
+}
+
+impl Default for MatrixConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            homeserver: String::new(),
+            user_id: None,
+            allowed_room_ids: Vec::new(),
+        }
+    }
+}
+
+// -- Email ---------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmailConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Monitor inbox for new messages every N seconds (0 = disabled).
+    #[serde(default)]
+    pub monitor_interval_secs: u64,
+}
+
+impl Default for EmailConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            monitor_interval_secs: 0,
+        }
+    }
+}
+
 // -- Sessions ------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1168,6 +1250,9 @@ impl Default for Config {
             android_sms: AndroidSmsConfig::default(),
             discord: DiscordConfig::default(),
             signal: SignalConfig::default(),
+            slack: SlackConfig::default(),
+            matrix: MatrixConfig::default(),
+            email: EmailConfig::default(),
             sessions: SessionsConfig::default(),
             tunnel: TunnelConfig::default(),
             tls: TlsConfig::default(),

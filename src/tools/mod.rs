@@ -1,6 +1,7 @@
 #[cfg(feature = "browser")]
 pub mod browser;
 pub mod cron;
+pub mod email;
 pub mod exec;
 pub mod file;
 pub mod goal;

@@ -5,6 +5,46 @@ All notable changes to SafeClaw are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-03-04
+
+### Added
+
+- **Email backend** — send and read emails via Gmail API and Microsoft Graph
+  using existing OAuth tokens.  New `email` tool with `send`, `inbox`, and
+  `search` actions.  OAuth scopes upgraded to include `gmail.send` and
+  `Mail.Send` for write access.
+- **Slack workspace bot** — full Slack Web API backend for sending messages
+  (with Block Kit for rich content) and an Events API endpoint at
+  `/api/messaging/slack/events` for receiving messages.  Configured via
+  `SLACK_BOT_TOKEN` environment variable and `[slack]` config section.
+- **Matrix backend** — connects to any Matrix homeserver via the
+  Client-Server API (reqwest).  Supports login with access token or
+  username/password.  Background `/sync` long-polling for incoming messages.
+  Configured via `MATRIX_ACCESS_TOKEN` or `MATRIX_USER`/`MATRIX_PASSWORD`
+  and `[matrix]` config section.
+- **Rich messaging infrastructure** — `RichContent` enum (`Image`, `File`,
+  `Buttons`, `Card`) with `send_rich()` method on `MessagingBackend`.
+  Default implementation falls back to text for platforms without native
+  rich message support.
+- **Telegram rich messages** — native `send_photo`, `send_document`, and
+  `InlineKeyboardMarkup` support.  Cards rendered with HTML formatting.
+- **Discord rich messages** — native embed support for images and cards via
+  Serenity's `CreateEmbed` and `CreateMessage` builders.
+- **Slack rich messages** — Block Kit blocks for images, buttons (actions),
+  and structured cards with headers and sections.
+- **Config sections** — new `[slack]`, `[matrix]`, and `[email]` config
+  sections with `enabled`, authorization, and provider-specific settings.
+
+### Changed
+
+- **`MessagingBackend` trait** — extended with `as_any()` for downcasting,
+  `supports_rich_messages()`, and `send_rich()` (with default text fallback).
+  Fully backward-compatible via default method implementations.
+- **`MessagingManager`** — added `send_rich_all()` for broadcasting rich
+  content to all registered backends.
+- **OAuth scopes** — Google now includes `gmail.send`; Microsoft now includes
+  `Mail.Send` alongside existing read scopes.
+
 ## [0.5.0] — 2026-03-04
 
 ### Added
