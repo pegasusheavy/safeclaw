@@ -5,6 +5,20 @@ All notable changes to SafeClaw are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-03-04
+
+### Added
+
+- **API reference** — comprehensive documentation for all 100+ REST
+  endpoints in `docs/api-reference.md`, organized by category with
+  request/response examples for every endpoint.
+
+- **Skill authoring guide** — tutorial in `docs/skill-authoring-guide.md`
+  covering Python (with venv), Node.js, Rhai, and shell skills. Includes
+  `skill.toml` manifest reference, credentials, dependencies, sandboxing,
+  versioning/rollback, hot reload, extension routes, dashboard UI panels,
+  and a complete RSS monitor example.
+
 ## [0.8.0] — 2026-03-04
 
 ### Added

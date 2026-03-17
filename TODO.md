@@ -468,9 +468,15 @@ single `browser` tool (action dispatch pattern).
 - [x] **AI co-authorship policy** — `CONTRIBUTING.md` requires attestation
       of the AI model used and `Co-authored-by` git trailer for all
       AI-assisted contributions.
-- [ ] **API reference** — auto-generated docs for all REST endpoints.
-- [ ] **Skill authoring guide** — tutorial for writing Python, Node.js,
-      Rhai, and shell skills with `skill.toml` examples.
+- [x] **API reference** — comprehensive docs for all 100+ REST endpoints
+      in `docs/api-reference.md`, covering auth, skills, OAuth, knowledge
+      graph, security, federation, messaging, and more with request/response
+      examples.
+- [x] **Skill authoring guide** — tutorial in `docs/skill-authoring-guide.md`
+      for writing Python (with venv), Node.js, Rhai, and shell skills.
+      Covers `skill.toml` manifest, credentials, dependencies, sandboxing,
+      versioning/rollback, hot reload, Rhai extension routes, dashboard
+      UI panels, and a full RSS monitor example.
 
 ---
 
