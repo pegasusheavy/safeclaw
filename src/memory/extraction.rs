@@ -101,6 +101,7 @@ pub async fn extract_from_conversation(
         message: &prompt,
         tools: None,
         prompt_skills: &[],
+        images: Vec::new(),
     };
 
     let response = match llm.generate(&gen_ctx).await {

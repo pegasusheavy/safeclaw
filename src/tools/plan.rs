@@ -158,6 +158,7 @@ impl Tool for PlanTool {
                     message: &prompt,
                     tools: None,
                     prompt_skills: &[],
+                    images: Vec::new(),
                 };
 
                 match agent.llm.generate(&gen_ctx).await {
@@ -198,6 +199,7 @@ impl Tool for PlanTool {
             message: &synthesis_prompt,
             tools: None,
             prompt_skills: &[],
+            images: Vec::new(),
         };
 
         let plan = match agent.llm.generate(&gen_ctx).await {

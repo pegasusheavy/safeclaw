@@ -415,6 +415,18 @@ pub struct ToolsConfig {
 
     #[serde(default)]
     pub cron: CronToolConfig,
+
+    #[serde(default)]
+    pub vision: VisionToolConfig,
+
+    #[serde(default)]
+    pub voice: VoiceToolConfig,
+
+    #[serde(default)]
+    pub document: DocumentToolConfig,
+
+    #[serde(default)]
+    pub screen: ScreenToolConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -454,6 +466,54 @@ pub struct MessageToolConfig {
 pub struct CronToolConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VisionToolConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for VisionToolConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VoiceToolConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for VoiceToolConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DocumentToolConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for DocumentToolConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScreenToolConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for ScreenToolConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
 }
 
 // -- Dashboard -----------------------------------------------------------

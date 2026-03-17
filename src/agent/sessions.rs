@@ -73,6 +73,7 @@ impl Agent {
                 message: &prompt,
                 tools: Some(&self.tools),
                 prompt_skills: &self.always_on_skills,
+                images: Vec::new(),
             };
 
             let response = self.llm.generate(&gen_ctx).await?;

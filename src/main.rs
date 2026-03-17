@@ -714,7 +714,19 @@ fn build_tool_registry(
     }
 
     registry.register(Box::new(goal::GoalTool::new()));
-    registry.register(Box::new(image::ImageTool::new()));
+    if config.tools.vision.enabled {
+        registry.register(Box::new(image::ImageTool::new(agent_ref.clone())));
+    }
+    if config.tools.document.enabled {
+        registry.register(Box::new(document::DocumentTool::new()));
+    }
+    if config.tools.voice.enabled {
+        registry.register(Box::new(voice::TranscribeTool::new()));
+        registry.register(Box::new(voice::SpeakTool::new()));
+    }
+    if config.tools.screen.enabled {
+        registry.register(Box::new(screen::ScreenTool::new(agent_ref.clone())));
+    }
     registry.register(Box::new(memory::MemorySearchTool));
     registry.register(Box::new(memory::MemoryGetTool));
     registry.register(Box::new(knowledge::KnowledgeGraphTool::new()));

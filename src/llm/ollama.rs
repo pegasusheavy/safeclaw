@@ -53,6 +53,8 @@ struct ChatOptions {
 struct ChatMessage {
     role: String,
     content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    images: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -139,16 +141,26 @@ impl OllamaEngine {
 
         let url = format!("{}/api/chat", self.base_url);
 
+        let image_b64s: Vec<String> = ctx.images.iter().map(|img| {
+            if img.data_b64.starts_with("data:") {
+                img.data_b64.split(',').nth(1).unwrap_or(&img.data_b64).to_string()
+            } else {
+                img.data_b64.clone()
+            }
+        }).collect();
+
         let body = ChatRequest {
             model: self.model.clone(),
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
                     content: system_prompt,
+                    images: Vec::new(),
                 },
                 ChatMessage {
                     role: "user".to_string(),
                     content: ctx.message.to_string(),
+                    images: image_b64s,
                 },
             ],
             stream: false,

@@ -99,6 +99,11 @@ impl SandboxedFs {
         Ok(std::fs::read_to_string(path)?)
     }
 
+    pub fn read_binary(&self, relative: &str) -> Result<Vec<u8>> {
+        let path = self.resolve(std::path::Path::new(relative))?;
+        Ok(std::fs::read(path)?)
+    }
+
 }
 
 // ===========================================================================

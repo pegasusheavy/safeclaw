@@ -1,6 +1,6 @@
 [package]
 name = "safeclaw"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2024"
 description = "Sandboxed autonomous AI agent with tool execution, knowledge graph, and multi-interface control"
 
@@ -32,7 +32,7 @@ axum = { version = "0.8", features = ["macros"] }
 tower-http = { version = "0.6", features = ["cors"] }
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "multipart", "stream"] }
 
 # Database
 rusqlite = { version = "0.31", features = ["bundled"] }
