@@ -88,6 +88,7 @@ pub async fn consolidate_old_memories(
         message: &prompt,
         tools: None,
         prompt_skills: &[],
+        images: Vec::new(),
     };
 
     let summary = match llm.generate(&gen_ctx).await {

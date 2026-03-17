@@ -246,6 +246,7 @@ impl Agent {
             message: &prompt,
             tools: Some(&self.tools),
             prompt_skills: &self.always_on_skills,
+            images: Vec::new(),
         };
 
         match self.llm.generate(&gen_ctx).await {
@@ -335,6 +336,7 @@ impl Agent {
             message: &prompt,
             tools: None,
             prompt_skills: &self.always_on_skills,
+            images: Vec::new(),
         };
 
         match self.llm.generate(&gen_ctx).await {
@@ -520,6 +522,7 @@ impl Agent {
                 message: &context,
                 tools: Some(&self.tools),
                 prompt_skills: &self.always_on_skills,
+                images: Vec::new(),
             };
 
             match self.llm.generate(&gen_ctx).await {

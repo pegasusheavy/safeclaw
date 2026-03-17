@@ -1016,11 +1016,25 @@ pub async fn delete_skill(
 // -- Chat ----------------------------------------------------------------
 
 #[derive(Deserialize)]
+pub struct ChatAttachment {
+    /// Base64-encoded file data (without data URI prefix).
+    pub data: String,
+    /// MIME type (e.g. "image/png", "audio/ogg", "application/pdf").
+    pub mime_type: String,
+    /// Original filename.
+    #[serde(default)]
+    pub filename: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct ChatMessageBody {
     pub message: String,
     /// Optional user ID for multi-user routing.
     #[serde(default)]
     pub user_id: Option<String>,
+    /// Optional file attachments (images, audio, documents).
+    #[serde(default)]
+    pub attachments: Vec<ChatAttachment>,
 }
 
 #[derive(Serialize)]
@@ -1033,8 +1047,32 @@ pub async fn send_chat_message(
     State(state): State<DashState>,
     Json(body): Json<ChatMessageBody>,
 ) -> Result<Json<ChatResponse>, StatusCode> {
-    let message = body.message.trim().to_string();
-    if message.is_empty() {
+    let mut message = body.message.trim().to_string();
+
+    // Augment the message with attachment metadata so the agent knows
+    // what the user sent and can invoke the appropriate tools.
+    for att in &body.attachments {
+        let fname = att.filename.as_deref().unwrap_or("attachment");
+        let mime = &att.mime_type;
+        if mime.starts_with("image/") {
+            message.push_str(&format!(
+                "\n[User attached an image: {fname} ({mime}). \
+                 Use the 'image' tool to analyze it.]"
+            ));
+        } else if mime.starts_with("audio/") {
+            message.push_str(&format!(
+                "\n[User attached audio: {fname} ({mime}). \
+                 Use the 'transcribe' tool on it.]"
+            ));
+        } else {
+            message.push_str(&format!(
+                "\n[User attached a document: {fname} ({mime}). \
+                 Use the 'document' tool to extract its contents.]"
+            ));
+        }
+    }
+
+    if message.is_empty() && body.attachments.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -2249,6 +2287,7 @@ pub async fn onboarding_test_llm(
         message: "Say hello in one sentence.",
         tools: None,
         prompt_skills: &[],
+        images: Vec::new(),
     };
     match state.agent.llm.generate(&gen_ctx).await {
         Ok(response) => Json(serde_json::json!({

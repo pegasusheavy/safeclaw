@@ -96,16 +96,16 @@ old memories. Core memory persists across sessions.
 
 ## 3. Perception & Multimodal
 
-- [ ] **Vision (image tool)** — wire the placeholder image tool to a
+- [x] **Vision (image tool)** — wire the placeholder image tool to a
       vision model (Claude vision, GPT-4o, local). Accept images from
       Telegram/WhatsApp and the dashboard.
-- [ ] **Document understanding** — ingest PDFs, Word docs, spreadsheets.
+- [x] **Document understanding** — ingest PDFs, Word docs, spreadsheets.
       Extract text, tables, and structure.
-- [ ] **Voice input** — accept voice messages from Telegram/WhatsApp,
+- [x] **Voice input** — accept voice messages from Telegram/WhatsApp,
       transcribe with Whisper (local or API), pass text to the LLM.
-- [ ] **Voice output** — TTS for responses. Let the user choose between
+- [x] **Voice output** — TTS for responses. Let the user choose between
       text and voice replies per-platform.
-- [ ] **Screen/clipboard awareness** — optional desktop companion mode
+- [x] **Screen/clipboard awareness** — optional desktop companion mode
       where the agent can see what the user is looking at.
 
 ---

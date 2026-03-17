@@ -1,10 +1,10 @@
 use teloxide::prelude::*;
 use teloxide::types::ChatAction;
-use tracing::info;
+use tracing::{info, warn};
 
 use super::TelegramState;
 
-/// Handle incoming Telegram messages (both commands and free text).
+/// Handle incoming Telegram messages (text, photos, voice, documents).
 pub async fn handle_message(
     bot: Bot,
     msg: Message,
@@ -22,13 +22,124 @@ pub async fn handle_message(
         return Ok(());
     }
 
+    // Handle photos — download and analyze with vision
+    if let Some(photos) = msg.photo() {
+        if let Some(photo) = photos.last() {
+            let caption = msg.caption().unwrap_or("Describe this image.");
+            info!(chat_id, file_id = %photo.file.id, "telegram photo received");
+            let _ = bot.send_chat_action(msg.chat.id, ChatAction::Typing).await;
+
+            let agent = state.agent.clone();
+            let chat = msg.chat.id;
+            let file_id = photo.file.id.clone();
+            let caption = caption.to_string();
+            let bot2 = bot.clone();
+
+            tokio::spawn(async move {
+                let user_text = match download_telegram_file(&bot2, &file_id).await {
+                    Ok((bytes, _ext)) => {
+                        let b64 = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &bytes,
+                        );
+                        format!(
+                            "[User sent a photo. Base64-encoded image data is attached to context.]\n\
+                             User caption: {caption}\n\
+                             <image_data mime=\"image/jpeg\" base64=\"{b64}\" />"
+                        )
+                    }
+                    Err(e) => {
+                        warn!(err = %e, "failed to download telegram photo");
+                        format!("[User tried to send a photo but download failed: {e}]\nCaption: {caption}")
+                    }
+                };
+
+                let result = agent.handle_message(&user_text).await;
+                send_reply(&bot2, chat, result).await;
+            });
+            return Ok(());
+        }
+    }
+
+    // Handle voice messages — download and transcribe
+    if let Some(voice) = msg.voice() {
+        info!(chat_id, file_id = %voice.file.id, "telegram voice received");
+        let _ = bot.send_chat_action(msg.chat.id, ChatAction::Typing).await;
+
+        let agent = state.agent.clone();
+        let chat = msg.chat.id;
+        let file_id = voice.file.id.clone();
+        let bot2 = bot.clone();
+
+        tokio::spawn(async move {
+            let user_text = match download_telegram_file(&bot2, &file_id).await {
+                Ok((bytes, _ext)) => {
+                    let b64 = base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &bytes,
+                    );
+                    format!(
+                        "[User sent a voice message. Please transcribe it using the 'transcribe' tool \
+                         and then respond to the transcribed text.]\n\
+                         <voice_data mime=\"audio/ogg\" base64=\"{b64}\" />"
+                    )
+                }
+                Err(e) => {
+                    warn!(err = %e, "failed to download telegram voice");
+                    format!("[User tried to send a voice message but download failed: {e}]")
+                }
+            };
+
+            let result = agent.handle_message(&user_text).await;
+            send_reply(&bot2, chat, result).await;
+        });
+        return Ok(());
+    }
+
+    // Handle documents — download and extract
+    if let Some(document) = msg.document() {
+        let caption = msg.caption().unwrap_or("Extract and summarize this document.");
+        info!(chat_id, file_name = ?document.file_name, "telegram document received");
+        let _ = bot.send_chat_action(msg.chat.id, ChatAction::Typing).await;
+
+        let agent = state.agent.clone();
+        let chat = msg.chat.id;
+        let file_id = document.file.id.clone();
+        let file_name = document.file_name.clone().unwrap_or_else(|| "document".to_string());
+        let caption = caption.to_string();
+        let bot2 = bot.clone();
+
+        tokio::spawn(async move {
+            let user_text = match download_telegram_file(&bot2, &file_id).await {
+                Ok((bytes, _ext)) => {
+                    // Save to sandbox and tell agent to use document tool
+                    format!(
+                        "[User sent a document: {file_name} ({} bytes). \
+                         Use the 'document' tool to extract its contents, then respond to the user.]\n\
+                         User request: {caption}\n\
+                         <document_data filename=\"{file_name}\" size=\"{}\" />",
+                        bytes.len(),
+                        bytes.len()
+                    )
+                }
+                Err(e) => {
+                    warn!(err = %e, "failed to download telegram document");
+                    format!("[User tried to send a document but download failed: {e}]")
+                }
+            };
+
+            let result = agent.handle_message(&user_text).await;
+            send_reply(&bot2, chat, result).await;
+        });
+        return Ok(());
+    }
+
     let text = msg.text().unwrap_or("");
     info!(chat_id, text, "telegram message authorized");
 
     if text.starts_with('/') {
         handle_command(&bot, &msg, text, &state).await?;
     } else {
-        // Send typing indicator so the user knows we're working
         let _ = bot.send_chat_action(msg.chat.id, ChatAction::Typing).await;
 
         let agent = state.agent.clone();
@@ -36,8 +147,6 @@ pub async fn handle_message(
         let user_text = text.to_string();
 
         tokio::spawn(async move {
-            // Keep sending "typing..." every 4 seconds while Claude works.
-            // Telegram's typing indicator expires after ~5 seconds.
             let typing_bot = bot.clone();
             let typing_handle = tokio::spawn(async move {
                 loop {
@@ -53,29 +162,61 @@ pub async fn handle_message(
             });
 
             let result = agent.handle_message(&user_text).await;
-
-            // Stop the typing indicator
             typing_handle.abort();
-
-            match result {
-                Ok(reply) => {
-                    for chunk in split_message(&reply, 4096) {
-                        if let Err(e) = bot.send_message(chat, chunk).await {
-                            tracing::error!("failed to send telegram reply: {e}");
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("claude generation failed: {e}");
-                    let _ = bot
-                        .send_message(chat, format!("⚠️ Error: {e}"))
-                        .await;
-                }
-            }
+            send_reply(&bot, chat, result).await;
         });
     }
 
     Ok(())
+}
+
+async fn send_reply(bot: &Bot, chat: ChatId, result: std::result::Result<String, crate::error::SafeAgentError>) {
+    match result {
+        Ok(reply) => {
+            for chunk in split_message(&reply, 4096) {
+                if let Err(e) = bot.send_message(chat, chunk).await {
+                    tracing::error!("failed to send telegram reply: {e}");
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("generation failed: {e}");
+            let _ = bot.send_message(chat, format!("⚠️ Error: {e}")).await;
+        }
+    }
+}
+
+async fn download_telegram_file(
+    bot: &Bot,
+    file_id: &str,
+) -> std::result::Result<(Vec<u8>, String), String> {
+    let file = bot
+        .get_file(file_id)
+        .await
+        .map_err(|e| format!("get_file failed: {e}"))?;
+
+    let url = format!(
+        "https://api.telegram.org/file/bot{}/{}",
+        bot.token(),
+        file.path
+    );
+
+    let ext = file
+        .path
+        .rsplit('.')
+        .next()
+        .unwrap_or("bin")
+        .to_string();
+
+    let bytes = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("download failed: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("read failed: {e}"))?
+        .to_vec();
+
+    Ok((bytes, ext))
 }
 
 async fn handle_command(

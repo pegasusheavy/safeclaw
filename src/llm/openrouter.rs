@@ -56,7 +56,29 @@ struct ChatRequest {
 #[derive(Serialize, Deserialize)]
 struct ChatMessage {
     role: String,
-    content: String,
+    content: MessageContent,
+}
+
+/// OpenAI-compatible content: either a plain string or a multimodal array.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum MessageContent {
+    Text(String),
+    Parts(Vec<ContentPart>),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum ContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize)]
+struct ImageUrl {
+    url: String,
 }
 
 #[derive(Deserialize)]
@@ -199,16 +221,35 @@ impl OpenRouterEngine {
         let system_prompt = prompts::system_prompt(&self.personality, &self.agent_name, ctx.tools, Some(&self.timezone), Some(&self.locale), ctx.prompt_skills);
         let url = format!("{}/chat/completions", self.base_url);
 
+        let user_content = if ctx.images.is_empty() {
+            MessageContent::Text(ctx.message.to_string())
+        } else {
+            let mut parts = vec![ContentPart::Text {
+                text: ctx.message.to_string(),
+            }];
+            for img in &ctx.images {
+                let data_uri = if img.data_b64.starts_with("data:") {
+                    img.data_b64.clone()
+                } else {
+                    format!("data:{};base64,{}", img.mime_type, img.data_b64)
+                };
+                parts.push(ContentPart::ImageUrl {
+                    image_url: ImageUrl { url: data_uri },
+                });
+            }
+            MessageContent::Parts(parts)
+        };
+
         let body = ChatRequest {
             model: self.model.clone(),
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
-                    content: system_prompt,
+                    content: MessageContent::Text(system_prompt),
                 },
                 ChatMessage {
                     role: "user".to_string(),
-                    content: ctx.message.to_string(),
+                    content: user_content,
                 },
             ],
             max_tokens: Some(self.max_tokens),
@@ -282,7 +323,17 @@ impl OpenRouterEngine {
             .choices
             .into_iter()
             .next()
-            .map(|c| c.message.content)
+            .map(|c| match c.message.content {
+                MessageContent::Text(s) => s,
+                MessageContent::Parts(parts) => parts
+                    .into_iter()
+                    .filter_map(|p| match p {
+                        ContentPart::Text { text } => Some(text),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            })
             .unwrap_or_default()
             .trim()
             .to_string();

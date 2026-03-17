@@ -2,6 +2,7 @@
 pub mod browser;
 pub mod cron;
 pub mod delegate;
+pub mod document;
 pub mod email;
 pub mod exec;
 pub mod file;
@@ -12,7 +13,9 @@ pub mod memory;
 pub mod message;
 pub mod plan;
 pub mod process;
+pub mod screen;
 pub mod sessions;
+pub mod voice;
 pub mod web;
 
 use std::collections::HashMap;

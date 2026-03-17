@@ -355,6 +355,7 @@ impl Agent {
                 message: &context,
                 tools: Some(&self.tools),
                 prompt_skills: &active_skills,
+                images: Vec::new(),
             };
             let raw_response = self.llm.generate(&gen_ctx).await?;
 

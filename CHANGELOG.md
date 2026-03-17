@@ -5,6 +5,50 @@ All notable changes to SafeClaw are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-03-04
+
+### Added
+
+- **Vision (image tool)** — the `image` tool now calls the active LLM
+  backend with base64-encoded images. Supports sandbox-relative file paths
+  and URLs. OpenRouter and Ollama backends send native multimodal content
+  arrays; CLI backends receive image context as text.
+- **GenerateContext.images** — new `Vec<ImageAttachment>` field allows any
+  code path to attach images to LLM requests. OpenRouter sends them as
+  `image_url` content parts; Ollama uses the native `images` array.
+- **Document understanding** — new `document` tool extracts text from PDF,
+  DOCX, XLSX, CSV, and plain text files. Uses the existing `zip` crate for
+  Office Open XML formats and a lightweight PDF text extractor.
+- **Voice input (transcribe)** — new `transcribe` tool sends audio files
+  to an OpenAI-compatible Whisper endpoint. Supports MP3, WAV, OGG, M4A,
+  WEBM, FLAC. Configured via `OPENAI_API_KEY` / `WHISPER_API_KEY` /
+  `WHISPER_API_URL`.
+- **Voice output (speak)** — new `speak` tool generates MP3 audio from text
+  via an OpenAI-compatible TTS endpoint. Six voice options (alloy, echo,
+  fable, onyx, nova, shimmer). Output saved to sandbox.
+- **Screen/clipboard awareness** — new `screen` tool with three actions:
+  `screenshot` (captures display via grim/scrot/imagemagick and analyzes
+  with vision), `clipboard` (reads text via wl-paste/xclip/xsel),
+  `clipboard_image` (reads image from clipboard and analyzes). Disabled
+  by default; enable with `[tools.screen] enabled = true`.
+- **Telegram media handling** — the Telegram bot now accepts photos, voice
+  messages, and documents. Photos trigger vision analysis, voice messages
+  prompt transcription, documents prompt extraction.
+- **Dashboard attachments** — `POST /api/chat` now accepts an optional
+  `attachments` array with base64-encoded files. The agent is instructed
+  to use the appropriate tool for each attachment type.
+- **Multimodal tool configs** — new `[tools.vision]`, `[tools.voice]`,
+  `[tools.document]`, and `[tools.screen]` configuration sections with
+  `enabled` toggles. Vision, voice, and document are enabled by default;
+  screen is opt-in.
+- **SandboxedFs.read_binary()** — new method for reading raw bytes from
+  sandboxed paths.
+
+### Changed
+
+- **reqwest** now includes `multipart` and `stream` features for the
+  Whisper file upload API.
+
 ## [0.8.1] — 2026-03-04
 
 ### Added
